@@ -1,0 +1,9 @@
+battery_file: examples/batteries/4_minety_battery_storage.yaml
+
+strategy:
+  name: oracle
+  params:
+    # DP discretization controls (higher = slower, closer to optimal)
+    soc_steps: 200
+    power_steps: 10
+

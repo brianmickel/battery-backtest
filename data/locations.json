@@ -1,0 +1,20 @@
+{
+  "dataset_id": "caiso_lmp_real_time_5_min",
+  "updated_at": "2026-01-27T00:00:00Z",
+  "locations": [
+    {
+      "id": "MOSSLD_2_PSP1",
+      "name": "Moss Landing",
+      "type": "GNODE",
+      "market": "CAISO",
+      "dataset_id": "caiso_lmp_real_time_5_min"
+    },
+    {
+      "id": "SV_LNODER6A",
+      "name": "Flagstaff",
+      "type": "LNODE",
+      "market": "CAISO",
+      "dataset_id": "caiso_lmp_real_time_5_min"
+    }
+  ]
+}

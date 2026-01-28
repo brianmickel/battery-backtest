@@ -1,0 +1,12 @@
+# Gateway Energy Storage (California, USA)
+# A major project in San Diego that helps manage the high penetration of solar power in 
+# the CAISO market.
+battery:
+  name: "Gateway Energy Storage"
+  energy_capacity_mwh: 250.0
+  power_capacity_mw: 250.0
+  charge_efficiency: 0.93
+  discharge_efficiency: 0.93
+  min_soc: 0.05
+  max_soc: 0.95
+  degradation_cost_per_mwh: 1.8

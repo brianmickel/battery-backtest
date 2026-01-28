@@ -1,0 +1,29 @@
+{
+  "api_key": "{{API_KEY}}",
+  "data_source": {
+    "type": "gridstatus",
+    "dataset_id": "caiso_lmp_real_time_5_min",
+    "location_id": "SV_LNODER6A",
+    "start_date": "2026-01-18",
+    "end_date": "2026-01-19",
+    "timezone": "market"
+  },
+  "config": {
+    "battery_file": "0_flagstaff_theoretical",
+    "strategy": {
+      "name": "schedule",
+      "params": {
+        "charge_start": "11:00",
+        "charge_end": "15:00",
+        "discharge_start": "16:00",
+        "discharge_end": "23:59",
+        "charge_power_mw": 100.0,
+        "discharge_power_mw": 100.0
+      }
+    }
+  },
+  "options": {
+    "limit_intervals": 0,
+    "include_ledger": false
+  }
+}

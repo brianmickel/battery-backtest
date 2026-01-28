@@ -1,0 +1,12 @@
+# Victorian Big Battery (Victoria, Australia)
+# A massive Tesla Megapack installation designed to support the transmission line between
+# New South Wales and Victoria. It is a "1.5-hour" system.
+battery:
+  name: "Victorian Big Battery"
+  energy_capacity_mwh: 450.0
+  power_capacity_mw: 300.0
+  charge_efficiency: 0.95
+  discharge_efficiency: 0.95
+  min_soc: 0.10
+  max_soc: 0.90
+  degradation_cost_per_mwh: 2.5

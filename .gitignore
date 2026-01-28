@@ -1,0 +1,48 @@
+# Go build artifacts
+.gocache/
+.gopath/
+*.exe
+*.out
+battery-backtest
+api-server
+bin/
+dist/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+*.env
+
+# IDE and editor files
+.cursor/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Test and coverage
+coverage.txt
+coverage.html
+*.test
+
+# Results and logs
+results/
+*.log
+logs/
+
+# Dependencies
+vendor/
+
+# Frontend build artifacts
+web/node_modules/
+web/dist/
+web/.vite/
+
+# Sample data (large files)
+sample_data*.json
+
+# Docker
+.docker/

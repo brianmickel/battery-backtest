@@ -1,0 +1,18 @@
+battery:
+  energy_capacity_mwh: 100.0
+  power_capacity_mw: 50.0
+  charge_efficiency: 0.95
+  discharge_efficiency: 0.95
+  min_soc: 0.10
+  max_soc: 0.90
+  initial_soc: 0.20
+  degradation_cost_per_mwh: 2.0
+
+strategy:
+  name: schedule
+  params:
+    charge_start: "10:00"
+    charge_end: "17:00"
+    discharge_start: "17:00"
+    discharge_end: "20:00"
+

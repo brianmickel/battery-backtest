@@ -1,0 +1,13 @@
+# Moss Landing (California, USA)
+# Currently one of the largest battery storage facilities in the world, utilizing LG Chem
+# and Fluence technology. It is a "4-hour" battery, meaning it is built for energy 
+# shifting rather than just fast frequency response.
+battery:
+  name: "Moss Landing Phase I & II"
+  energy_capacity_mwh: 3000.0
+  power_capacity_mw: 750.0
+  charge_efficiency: 0.94
+  discharge_efficiency: 0.94
+  min_soc: 0.10
+  max_soc: 0.90
+  degradation_cost_per_mwh: 1.5
