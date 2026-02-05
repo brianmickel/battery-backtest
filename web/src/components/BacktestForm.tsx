@@ -9,7 +9,7 @@ interface BacktestFormProps {
 }
 
 export function BacktestForm({ onSubmit, isLoading }: BacktestFormProps) {
-  const { apiKey } = useApiKey();
+  const { apiKey, getApiKey } = useApiKey();
   
   // Input mode: 'form' or 'json'
   const [inputMode, setInputMode] = useState<'form' | 'json'>('form');
@@ -104,10 +104,11 @@ export function BacktestForm({ onSubmit, isLoading }: BacktestFormProps) {
     }
   }, [currentStrategy]);
 
-  // Build request object from form state
-  const buildRequest = (): BacktestRequest => {
+  // Build request object from form state (keyOverride: use when submitting so we get latest key)
+  const buildRequest = (keyOverride?: string): BacktestRequest => {
+    const key = keyOverride ?? apiKey;
     return {
-      api_key: apiKey,
+      api_key: key,
       data_source: {
         type: 'gridstatus',
         dataset_id: datasetId,
@@ -180,14 +181,13 @@ export function BacktestForm({ onSubmit, isLoading }: BacktestFormProps) {
     return obj && obj.base_config && Array.isArray(obj.variations);
   };
 
-  // Replace API key placeholder in JSON string
-  const replaceApiKeyPlaceholder = (jsonStr: string): string => {
-    // Replace {{API_KEY}} with actual API key, handling both quoted and unquoted cases
-    if (!apiKey) {
+  // Replace API key placeholder in JSON string (keyOverride: use getApiKey() when submitting)
+  const replaceApiKeyPlaceholder = (jsonStr: string, keyOverride?: string): string => {
+    const key = keyOverride ?? apiKey;
+    if (!key) {
       return jsonStr; // Keep placeholder if no API key
     }
-    // Replace "{{API_KEY}}" or '{{API_KEY}}' with the actual API key
-    return jsonStr.replace(/"\{\{API_KEY\}\}"/g, JSON.stringify(apiKey));
+    return jsonStr.replace(/"\{\{API_KEY\}\}"/g, JSON.stringify(key));
   };
 
   // Parse JSON and update form state
@@ -303,48 +303,41 @@ export function BacktestForm({ onSubmit, isLoading }: BacktestFormProps) {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    
+    const currentKey = getApiKey();
+
     let request: BacktestRequest | CompareBacktestRequest;
-    
+
     if (inputMode === 'json') {
       // Parse JSON and validate
       try {
-        // Replace {{API_KEY}} placeholder with actual API key before parsing
-        const jsonWithApiKey = replaceApiKeyPlaceholder(jsonText);
+        const jsonWithApiKey = replaceApiKeyPlaceholder(jsonText, currentKey);
         const parsed = JSON.parse(jsonWithApiKey);
-        
-        // Handle API key: check if missing, empty, null, or placeholder
-        const hasApiKeyInJson = parsed.api_key && 
-                                parsed.api_key !== '{{API_KEY}}' && 
-                                parsed.api_key !== '' && 
+
+        const hasApiKeyInJson = parsed.api_key &&
+                                parsed.api_key !== '{{API_KEY}}' &&
+                                parsed.api_key !== '' &&
                                 parsed.api_key !== null;
-        
+
         if (!hasApiKeyInJson) {
-          // Try to use API key from input field
-          if (!apiKey) {
+          if (!currentKey) {
             setJsonError('Missing api_key. Please enter your API key in the API key input field at the top of the page, or provide it in the JSON.');
             return;
           }
-          // Automatically inject API key from input field
-          parsed.api_key = apiKey;
+          parsed.api_key = currentKey;
         }
-        
-        // Final validation: ensure API key is present
+
         if (!parsed.api_key || parsed.api_key === '{{API_KEY}}' || parsed.api_key === '') {
           setJsonError('Missing api_key. Please enter your API key in the API key input field at the top of the page, or provide it in the JSON.');
           return;
         }
-        
-        // Check if it's a compare request
+
         if (isCompareRequest(parsed)) {
-          // Validate compare request fields
           if (!parsed.data_source || !parsed.base_config || !parsed.variations) {
             setJsonError('Missing required fields for compare request: data_source, base_config, and variations are required');
             return;
           }
           request = parsed as CompareBacktestRequest;
         } else {
-          // Validate regular backtest request fields
           if (!parsed.data_source || !parsed.config) {
             setJsonError('Missing required fields: data_source and config are required');
             return;
@@ -357,12 +350,11 @@ export function BacktestForm({ onSubmit, isLoading }: BacktestFormProps) {
         return;
       }
     } else {
-      // Build from form
-      if (!apiKey) {
+      if (!currentKey) {
         alert('Please enter your API key in the API key input field at the top of the page');
         return;
       }
-      request = buildRequest();
+      request = buildRequest(currentKey);
     }
 
     onSubmit(request);
