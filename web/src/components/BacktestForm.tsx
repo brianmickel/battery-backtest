@@ -23,6 +23,7 @@ export function BacktestForm({ onSubmit, isLoading }: BacktestFormProps) {
   const [startDate, setStartDate] = useState('2026-01-01');
   const [endDate, setEndDate] = useState('2026-01-07');
   const [timezone, setTimezone] = useState('market');
+  const [dateError, setDateError] = useState<string | null>(null);
 
   // Battery state
   const [useBatteryPreset, setUseBatteryPreset] = useState(true);
@@ -103,6 +104,23 @@ export function BacktestForm({ onSubmit, isLoading }: BacktestFormProps) {
       setStrategyParams(defaults);
     }
   }, [currentStrategy]);
+
+  // Validate date range: end not in future, and (end - start) <= 2 months
+  const validateDateRange = (start: string, end: string): string | null => {
+    const startParsed = new Date(start);
+    const endParsed = new Date(end);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    endParsed.setHours(0, 0, 0, 0);
+    if (isNaN(endParsed.getTime())) return 'Invalid end date';
+    if (endParsed > today) return 'End date cannot be in the future';
+    if (isNaN(startParsed.getTime())) return 'Invalid start date';
+    if (startParsed > endParsed) return 'Start date must be on or before end date';
+    const daysDiff = Math.round((endParsed.getTime() - startParsed.getTime()) / (1000 * 60 * 60 * 24));
+    const maxDays = 60; // 2 months
+    if (daysDiff > maxDays) return `Time range must be 2 months or less (currently ${daysDiff} days)`;
+    return null;
+  };
 
   // Build request object from form state (keyOverride: use when submitting so we get latest key)
   const buildRequest = (keyOverride?: string): BacktestRequest => {
@@ -357,6 +375,18 @@ export function BacktestForm({ onSubmit, isLoading }: BacktestFormProps) {
       request = buildRequest(currentKey);
     }
 
+    // Validate date range: end not in future, range <= 2 months
+    const ds = request.data_source;
+    if (ds?.start_date && ds?.end_date) {
+      const err = validateDateRange(ds.start_date, ds.end_date);
+      if (err) {
+        if (inputMode === 'json') setJsonError(err);
+        else setDateError(err);
+        return;
+      }
+    }
+    setDateError(null);
+    setJsonError(null);
     onSubmit(request);
   };
 
@@ -470,7 +500,7 @@ export function BacktestForm({ onSubmit, isLoading }: BacktestFormProps) {
             <input
               type="date"
               value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
+              onChange={(e) => { setStartDate(e.target.value); setDateError(null); }}
               required
             />
           </div>
@@ -479,10 +509,15 @@ export function BacktestForm({ onSubmit, isLoading }: BacktestFormProps) {
             <input
               type="date"
               value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
+              onChange={(e) => { setEndDate(e.target.value); setDateError(null); }}
               required
             />
           </div>
+          {dateError && (
+            <div className="form-group" style={{ flex: '1 1 100%', color: '#ffaaaa', fontSize: '0.9em' }}>
+              {dateError}
+            </div>
+          )}
           <div className="form-group">
             <label>Timezone</label>
             <select value={timezone} onChange={(e) => setTimezone(e.target.value)}>

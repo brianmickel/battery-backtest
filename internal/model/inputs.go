@@ -7,6 +7,5 @@ package model
 type BacktestInputs struct {
 	MarketData GridStatusLMPResponse
 	Battery    BatteryParams
-	// Strategy config comes later (rule params, horizons, etc).
+	// Strategy config comes later (rule params, ranges, etc).
 }
-

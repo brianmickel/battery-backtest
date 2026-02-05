@@ -52,6 +52,17 @@ func (h *BacktestHandler) RunBacktest(c *gin.Context) {
 		return
 	}
 
+	// Validate date range: end not in future, range <= 2 months
+	if err := validateDateRange(req.DataSource.StartDate, req.DataSource.EndDate); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error: models.ErrorDetail{
+				Code:    "INVALID_DATE_RANGE",
+				Message: err.Error(),
+			},
+		})
+		return
+	}
+
 	// Fetch data from Grid Status
 	intervals, err := h.fetchData(req.DataSource, req.APIKey)
 	if err != nil {
@@ -168,6 +179,17 @@ func (h *BacktestHandler) CompareBacktests(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse{
 			Error: models.ErrorDetail{
 				Code:    "INVALID_API_KEY",
+				Message: err.Error(),
+			},
+		})
+		return
+	}
+
+	// Validate date range: end not in future, range <= 2 months
+	if err := validateDateRange(req.DataSource.StartDate, req.DataSource.EndDate); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error: models.ErrorDetail{
+				Code:    "INVALID_DATE_RANGE",
 				Message: err.Error(),
 			},
 		})
@@ -291,6 +313,30 @@ func validateAPIKey(apiKey string) error {
 	return nil
 }
 
+// validateDateRange ensures end date is not in the future and the range is at most 2 months.
+func validateDateRange(startDate, endDate string) error {
+	start, err := time.Parse("2006-01-02", startDate)
+	if err != nil {
+		return fmt.Errorf("invalid start_date format (expected YYYY-MM-DD): %w", err)
+	}
+	end, err := time.Parse("2006-01-02", endDate)
+	if err != nil {
+		return fmt.Errorf("invalid end_date format (expected YYYY-MM-DD): %w", err)
+	}
+	today := time.Now().Truncate(24 * time.Hour)
+	if end.After(today) {
+		return fmt.Errorf("end date cannot be in the future")
+	}
+	if start.After(end) {
+		return fmt.Errorf("start date must be on or before end date")
+	}
+	const maxDays = 60 // 2 months
+	if end.Sub(start) > maxDays*24*time.Hour {
+		return fmt.Errorf("time range must be 2 months or less (maximum %d days)", maxDays)
+	}
+	return nil
+}
+
 func (h *BacktestHandler) buildConfig(req models.BacktestConfig) (*config.Config, error) {
 	cfg := &config.Config{
 		BatteryFile: req.BatteryFile,
@@ -326,7 +372,7 @@ func (h *BacktestHandler) buildConfig(req models.BacktestConfig) (*config.Config
 			}
 		}
 		batteryPath := filepath.Join(batteryDir, cfg.BatteryFile+".yaml")
-		
+
 		loaded, err := config.LoadUnchecked(batteryPath)
 		if err == nil {
 			// Merge: battery file is base, request config is override
@@ -422,27 +468,27 @@ func (h *BacktestHandler) buildSummary(result *backtest.Result) models.BacktestS
 	end := result.Ledger[len(result.Ledger)-1].IntervalEndLocal
 
 	var chargeTotal, dischargeTotal float64
-	
+
 	// Group intervals by day for per-day windows
 	type dayKey struct {
 		Year  int
 		Month time.Month
 		Day   int
 	}
-	
+
 	// Track windows with cost/price calculations
 	type chargeWindowData struct {
 		window      models.TimeWindow
 		totalCost   float64 // Sum of LMP * Energy for weighted average
 		totalEnergy float64
 	}
-	
+
 	type dischargeWindowData struct {
-		window      models.TimeWindow
+		window       models.TimeWindow
 		totalRevenue float64 // Sum of LMP * Energy for weighted average
 		totalEnergy  float64
 	}
-	
+
 	chargeWindowsByDay := make(map[dayKey]*chargeWindowData)
 	dischargeWindowsByDay := make(map[dayKey]*dischargeWindowData)
 
@@ -450,7 +496,7 @@ func (h *BacktestHandler) buildSummary(result *backtest.Result) models.BacktestS
 		// Calculate totals
 		if row.EnergyFromGridMWh > 0 {
 			chargeTotal += row.EnergyFromGridMWh
-			
+
 			// Per-day: track charge windows with cost
 			day := dayKey{
 				Year:  row.IntervalStartLocal.Year(),
@@ -475,10 +521,10 @@ func (h *BacktestHandler) buildSummary(result *backtest.Result) models.BacktestS
 				}
 			}
 		}
-		
+
 		if row.EnergyToGridMWh > 0 {
 			dischargeTotal += row.EnergyToGridMWh
-			
+
 			// Per-day: track discharge windows with price
 			day := dayKey{
 				Year:  row.IntervalStartLocal.Year(),
@@ -508,11 +554,11 @@ func (h *BacktestHandler) buildSummary(result *backtest.Result) models.BacktestS
 	// Convert maps to sorted arrays (by day) with average costs
 	chargeWindows := make([]models.ChargeWindow, 0, len(chargeWindowsByDay))
 	dischargeWindows := make([]models.DischargeWindow, 0, len(dischargeWindowsByDay))
-	
+
 	// Track which days we've already added to maintain order
 	seenChargeDays := make(map[dayKey]bool)
 	seenDischargeDays := make(map[dayKey]bool)
-	
+
 	// Iterate through ledger in chronological order to build sorted arrays
 	for _, row := range result.Ledger {
 		day := dayKey{
@@ -520,7 +566,7 @@ func (h *BacktestHandler) buildSummary(result *backtest.Result) models.BacktestS
 			Month: row.IntervalStartLocal.Month(),
 			Day:   row.IntervalStartLocal.Day(),
 		}
-		
+
 		if row.EnergyFromGridMWh > 0 {
 			if !seenChargeDays[day] {
 				if winData, exists := chargeWindowsByDay[day]; exists {
@@ -529,15 +575,15 @@ func (h *BacktestHandler) buildSummary(result *backtest.Result) models.BacktestS
 						avgCost = winData.totalCost / winData.totalEnergy
 					}
 					chargeWindows = append(chargeWindows, models.ChargeWindow{
-						TimeWindow:         winData.window,
-						AverageCostPerMWh:  avgCost,
-						EnergyMWh:          winData.totalEnergy,
+						TimeWindow:        winData.window,
+						AverageCostPerMWh: avgCost,
+						EnergyMWh:         winData.totalEnergy,
 					})
 					seenChargeDays[day] = true
 				}
 			}
 		}
-		
+
 		if row.EnergyToGridMWh > 0 {
 			if !seenDischargeDays[day] {
 				if winData, exists := dischargeWindowsByDay[day]; exists {
@@ -546,9 +592,9 @@ func (h *BacktestHandler) buildSummary(result *backtest.Result) models.BacktestS
 						avgPrice = winData.totalRevenue / winData.totalEnergy
 					}
 					dischargeWindows = append(dischargeWindows, models.DischargeWindow{
-						TimeWindow:          winData.window,
-						AveragePricePerMWh:  avgPrice,
-						EnergyMWh:           winData.totalEnergy,
+						TimeWindow:         winData.window,
+						AveragePricePerMWh: avgPrice,
+						EnergyMWh:          winData.totalEnergy,
 					})
 					seenDischargeDays[day] = true
 				}
