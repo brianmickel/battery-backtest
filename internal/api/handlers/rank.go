@@ -105,9 +105,10 @@ func (h *RankHandler) RankNodes(c *gin.Context) {
 						gsErr.StatusCode == http.StatusUnauthorized ||
 						gsErr.StatusCode == http.StatusTooManyRequests {
 						statusCode := http.StatusBadRequest
-						if gsErr.StatusCode == http.StatusForbidden || gsErr.StatusCode == http.StatusUnauthorized {
+						switch gsErr.StatusCode {
+						case http.StatusForbidden, http.StatusUnauthorized:
 							statusCode = http.StatusUnauthorized
-						} else if gsErr.StatusCode == http.StatusTooManyRequests {
+						case http.StatusTooManyRequests:
 							statusCode = http.StatusTooManyRequests
 						}
 						c.JSON(statusCode, models.ErrorResponse{
