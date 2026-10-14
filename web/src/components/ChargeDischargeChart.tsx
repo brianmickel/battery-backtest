@@ -75,9 +75,10 @@ export function ChargeDischargeChart({ ledger }: ChargeDischargeChartProps) {
           />
           <ReferenceLine y={0} stroke="#666" strokeDasharray="3 3" />
           <Tooltip 
-            formatter={(value, name) => {
+            formatter={(value, _name, item) => {
               const absValue = Math.abs(Number(value));
-              return [`${absValue.toFixed(2)} MW`, name === 'charge' ? 'Charge' : 'Discharge'];
+              // `name` is the Bar's display name ("Charge"), so match on dataKey instead.
+              return [`${absValue.toFixed(2)} MW`, item.dataKey === 'charge' ? 'Charge' : 'Discharge'];
             }}
             labelFormatter={(label) => `Time: ${label}`}
           />
