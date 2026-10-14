@@ -7,15 +7,18 @@ import (
 	"time"
 )
 
-func WriteLedgerCSV(path string, ledger []LedgerRow) error {
+func WriteLedgerCSV(path string, ledger []LedgerRow) (err error) {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
 	w := csv.NewWriter(f)
-	defer w.Flush()
 
 	header := []string{
 		"index",
@@ -67,6 +70,7 @@ func WriteLedgerCSV(path string, ledger []LedgerRow) error {
 		}
 	}
 
+	w.Flush()
 	return w.Error()
 }
 
