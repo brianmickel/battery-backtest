@@ -75,8 +75,8 @@ export function ChargeDischargeChart({ ledger }: ChargeDischargeChartProps) {
           />
           <ReferenceLine y={0} stroke="#666" strokeDasharray="3 3" />
           <Tooltip 
-            formatter={(value: number, name: string) => {
-              const absValue = Math.abs(value);
+            formatter={(value, name) => {
+              const absValue = Math.abs(Number(value));
               return [`${absValue.toFixed(2)} MW`, name === 'charge' ? 'Charge' : 'Discharge'];
             }}
             labelFormatter={(label) => `Time: ${label}`}

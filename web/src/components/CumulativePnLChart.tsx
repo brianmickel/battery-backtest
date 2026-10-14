@@ -46,7 +46,7 @@ export function CumulativePnLChart({ ledger }: CumulativePnLChartProps) {
             tickFormatter={(value) => formatCurrency(value)}
           />
           <Tooltip 
-            formatter={(value: number) => formatCurrency(value)}
+            formatter={(value) => formatCurrency(Number(value))}
             labelFormatter={(label) => `Time: ${label}`}
           />
           <Legend />
