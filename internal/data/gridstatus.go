@@ -143,7 +143,7 @@ func (c *GridStatusClient) QueryLocation(params QueryLocationParams) (*model.Gri
 		log.Printf("[GridStatus] Request failed: %v (duration: %v)", err, duration)
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Log the response
 	log.Printf("[GridStatus] Response: %d %s (duration: %v, dataset=%s, location=%s)",
