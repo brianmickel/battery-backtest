@@ -53,5 +53,5 @@ The built files will be in the `dist` directory and can be served by any static 
 
 ## Requirements
 
-- Node.js 18+ and npm
+- Node.js 20.19+ or 22.12+ and npm
 - API server running on port 8080 (or configure via `VITE_API_URL` environment variable)
