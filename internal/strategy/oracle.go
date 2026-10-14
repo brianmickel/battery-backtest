@@ -155,19 +155,19 @@ func optimizeDP(intervals []model.LMPInterval, p model.BatteryParams, initialSOC
 	initIdx := socToIdx(initialSOC)
 	dp[initIdx] = 0
 
-	// Backpointers:
-	choice := make([][]int, len(intervals)) // chosen next-state index
-	powerChosen := make([][]float64, len(intervals))
+	// Backpointers: for each interval t and each state reached after t,
+	// the predecessor state and realized power on the best path into it.
+	prevState := make([][]int, len(intervals))
+	prevPower := make([][]float64, len(intervals))
 	for t := range intervals {
-		choice[t] = make([]int, nStates)
-		powerChosen[t] = make([]float64, nStates)
+		prevState[t] = make([]int, nStates)
+		prevPower[t] = make([]float64, nStates)
 		for s := 0; s < nStates; s++ {
-			choice[t][s] = -1
-			powerChosen[t][s] = 0
+			prevState[t][s] = -1
 		}
 	}
 
-	// Action set: [-Pmax .. +Pmax] in steps.
+	// Action set: [-Pmax .. +Pmax] in steps (includes idle at k=0).
 	pmax := p.PowerCapacityMW
 	step := pmax / float64(powerSteps)
 	actions := make([]float64, 0, 2*powerSteps+1)
@@ -190,32 +190,16 @@ func optimizeDP(intervals []model.LMPInterval, p model.BatteryParams, initialSOC
 			}
 			soc := idxToSoc(sIdx)
 
-			// Always consider all actions, including idle (power = 0)
-			// Track the best action from this state to ensure we always have a choice
-			bestNextState := sIdx // Default to staying in same state (idle)
-			bestValue := dp[sIdx] // At minimum, idle maintains current value
-			bestPower := 0.0      // Idle power
-
 			for _, desiredPower := range actions {
 				nsoc, realizedPower, pnl := simulateInterval(soc, desiredPower, it.LMP, dtH, p)
 				ns := socToIdx(nsoc)
 				v := dp[sIdx] + pnl
-				// Update next state value if this is better
 				if v > next[ns] {
 					next[ns] = v
-				}
-				// Track best action from this state
-				if v > bestValue {
-					bestValue = v
-					bestNextState = ns
-					bestPower = realizedPower
+					prevState[t][ns] = sIdx
+					prevPower[t][ns] = realizedPower
 				}
 			}
-
-			// Always record the best action from this reachable state
-			// Since we default to idle, bestNextState should always be valid
-			choice[t][sIdx] = bestNextState
-			powerChosen[t][sIdx] = bestPower
 		}
 
 		// Swap dp and next for next iteration
@@ -232,32 +216,16 @@ func optimizeDP(intervals []model.LMPInterval, p model.BatteryParams, initialSOC
 		}
 	}
 
-	// Reconstruct plan.
+	// Reconstruct the optimal plan by walking backpointers from the best final state.
 	plan := make([]model.Dispatch, len(intervals))
 	state := bestState
 	for t := len(intervals) - 1; t >= 0; t-- {
-		// We stored choice/power from previous state to next; need to find a prev state that leads to 'state' with optimal value.
-		// For simplicity, we replay forward by tracking from initial state using recorded choices.
-		// We'll reconstruct forward instead.
-		_ = t
-		_ = state
-		break
-	}
-
-	// Forward reconstruction:
-	// Follow the recorded choices from the initial state
-	cur := initIdx
-	for t := 0; t < len(intervals); t++ {
-		// choice[t][cur] should always be valid since we record at least idle for reachable states
-		ns := choice[t][cur]
-		if ns < 0 {
-			// This shouldn't happen, but fallback to idle if it does
-			plan[t] = model.Dispatch{PowerMW: 0}
-			// Stay in current state
-			continue
+		ps := prevState[t][state]
+		if ps < 0 {
+			return nil, fmt.Errorf("oracle reconstruction failed at t=%d", t)
 		}
-		plan[t] = model.Dispatch{PowerMW: powerChosen[t][cur]}
-		cur = ns
+		plan[t] = model.Dispatch{PowerMW: prevPower[t][state]}
+		state = ps
 	}
 
 	return plan, nil
