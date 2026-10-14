@@ -1,5 +1,5 @@
 # Stage 1: Build Go backend
-FROM golang:1.21-alpine AS backend-builder
+FROM golang:1.27-alpine AS backend-builder
 
 # Install build dependencies
 RUN apk add --no-cache git
@@ -20,7 +20,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o api-server ./cmd/api
 
 # Stage 2: Build React frontend
-FROM node:18-alpine AS frontend-builder
+FROM node:24-alpine AS frontend-builder
 
 # Set working directory
 WORKDIR /build
@@ -38,7 +38,7 @@ COPY web/ ./
 RUN npm run build
 
 # Stage 3: Final runtime image
-FROM alpine:latest
+FROM alpine:3.24
 
 # Install ca-certificates and wget for HTTPS requests and healthcheck
 RUN apk --no-cache add ca-certificates tzdata wget
