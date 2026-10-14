@@ -38,9 +38,11 @@ export interface BatteryConfig {
   degradation_cost_per_mwh?: number;
 }
 
+export type StrategyParamValue = string | number;
+
 export interface StrategyConfig {
   name: string;
-  params?: Record<string, any>;
+  params?: Record<string, StrategyParamValue>;
 }
 
 export interface BacktestConfig {
@@ -131,7 +133,7 @@ export interface StrategyInfo {
     name: string;
     type: string;
     description: string;
-    default?: any;
+    default?: StrategyParamValue;
   }>;
 }
 
@@ -178,6 +180,21 @@ export interface CompareBacktestResponse {
   comparison: ComparisonResult[];
 }
 
+interface ApiErrorBody {
+  error?: { message?: string };
+}
+
+// Extract a user-facing message from an API (axios) error or a plain Error.
+export function getErrorMessage(err: unknown, fallback: string): string {
+  if (axios.isAxiosError<ApiErrorBody>(err)) {
+    return err.response?.data?.error?.message || err.message || fallback;
+  }
+  if (err instanceof Error) {
+    return err.message || fallback;
+  }
+  return fallback;
+}
+
 // API functions
 export const apiService = {
   async runBacktest(request: BacktestRequest): Promise<BacktestResponse> {
@@ -195,9 +212,9 @@ export const apiService = {
       const response = await api.get<{ batteries: BatteryInfo[] }>('/api/v1/batteries');
       console.log('Batteries API response:', response.data);
       return response.data.batteries || [];
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error fetching batteries:', error);
-      console.error('Response:', error.response?.data);
+      console.error('Response:', axios.isAxiosError(error) ? error.response?.data : undefined);
       throw error;
     }
   },
@@ -207,9 +224,9 @@ export const apiService = {
       const response = await api.get<{ strategies: StrategyInfo[] }>('/api/v1/strategies');
       console.log('Strategies API response:', response.data);
       return response.data.strategies || [];
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error fetching strategies:', error);
-      console.error('Response:', error.response?.data);
+      console.error('Response:', axios.isAxiosError(error) ? error.response?.data : undefined);
       throw error;
     }
   },

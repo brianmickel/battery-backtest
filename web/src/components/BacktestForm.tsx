@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { apiService, BacktestRequest, CompareBacktestRequest, BatteryInfo, StrategyInfo } from '../services/api';
+import { apiService, getErrorMessage, BacktestRequest, CompareBacktestRequest, BatteryInfo, StrategyInfo, StrategyParamValue } from '../services/api';
 import { useApiKey } from '../hooks/useApiKey';
 
 interface BacktestFormProps {
@@ -41,7 +41,7 @@ export function BacktestForm({ onSubmit, isLoading }: BacktestFormProps) {
 
   // Strategy state
   const [strategyName, setStrategyName] = useState('schedule');
-  const [strategyParams, setStrategyParams] = useState<Record<string, any>>({
+  const [strategyParams, setStrategyParams] = useState<Record<string, StrategyParamValue>>({
     charge_start: '10:00',
     discharge_start: '17:00',
   });
@@ -95,8 +95,8 @@ export function BacktestForm({ onSubmit, isLoading }: BacktestFormProps) {
   // Update strategy params when strategy changes
   useEffect(() => {
     if (currentStrategy) {
-      const defaults: Record<string, any> = {};
-      currentStrategy.parameters.forEach((param: { name: string; default?: any }) => {
+      const defaults: Record<string, StrategyParamValue> = {};
+      currentStrategy.parameters.forEach((param) => {
         if (param.default !== undefined) {
           defaults[param.name] = param.default;
         }
@@ -123,7 +123,7 @@ export function BacktestForm({ onSubmit, isLoading }: BacktestFormProps) {
   };
 
   // Build request object from form state (keyOverride: use when submitting so we get latest key)
-  const buildRequest = (keyOverride?: string): BacktestRequest => {
+  const buildRequest = useCallback((keyOverride?: string): BacktestRequest => {
     const key = keyOverride ?? apiKey;
     return {
       api_key: key,
@@ -159,20 +159,25 @@ export function BacktestForm({ onSubmit, isLoading }: BacktestFormProps) {
         include_ledger: includeLedger,
       },
     };
-  };
+  }, [
+    apiKey, datasetId, locationId, startDate, endDate, timezone,
+    useBatteryPreset, batteryFile, customBattery,
+    strategyName, strategyParams,
+    limitIntervals, includeLedger,
+  ]);
 
   // Track if we're updating from JSON to prevent loops
   const [isUpdatingFromJson, setIsUpdatingFromJson] = useState(false);
 
   // Build request with placeholder API key for JSON preview
-  const buildRequestForPreview = (): BacktestRequest => {
+  const buildRequestForPreview = useCallback((): BacktestRequest => {
     const request = buildRequest();
     // Replace actual API key with placeholder for display
     return {
       ...request,
       api_key: '{{API_KEY}}',
     };
-  };
+  }, [buildRequest]);
 
   // Update JSON text when form changes (only if in form mode and not updating from JSON)
   useEffect(() => {
@@ -186,17 +191,13 @@ export function BacktestForm({ onSubmit, isLoading }: BacktestFormProps) {
         setJsonError('Error generating JSON');
       }
     }
-  }, [
-    apiKey, datasetId, locationId, startDate, endDate, timezone,
-    useBatteryPreset, batteryFile, customBattery,
-    strategyName, strategyParams,
-    limitIntervals, includeLedger,
-    inputMode, isUpdatingFromJson
-  ]);
+  }, [buildRequestForPreview, inputMode, isUpdatingFromJson]);
 
   // Check if JSON is a compare request
-  const isCompareRequest = (obj: any): obj is CompareBacktestRequest => {
-    return obj && obj.base_config && Array.isArray(obj.variations);
+  const isCompareRequest = (obj: unknown): obj is CompareBacktestRequest => {
+    if (typeof obj !== 'object' || obj === null) return false;
+    const candidate = obj as { base_config?: unknown; variations?: unknown };
+    return Boolean(candidate.base_config) && Array.isArray(candidate.variations);
   };
 
   // Replace API key placeholder in JSON string (keyOverride: use getApiKey() when submitting)
@@ -283,8 +284,8 @@ export function BacktestForm({ onSubmit, isLoading }: BacktestFormProps) {
       setTimeout(() => setIsUpdatingFromJson(false), 100);
 
       return true;
-    } catch (err: any) {
-      setJsonError(err.message || 'Invalid JSON');
+    } catch (err) {
+      setJsonError(getErrorMessage(err, 'Invalid JSON'));
       setJsonSuccess(false);
       setIsUpdatingFromJson(false);
       return false;
@@ -363,8 +364,8 @@ export function BacktestForm({ onSubmit, isLoading }: BacktestFormProps) {
           request = parsed as BacktestRequest;
         }
         setJsonError(null);
-      } catch (err: any) {
-        setJsonError(err.message || 'Invalid JSON');
+      } catch (err) {
+        setJsonError(getErrorMessage(err, 'Invalid JSON'));
         return;
       }
     } else {
@@ -711,7 +712,7 @@ export function BacktestForm({ onSubmit, isLoading }: BacktestFormProps) {
         {currentStrategy && (
           <div>
             <p style={{ opacity: 0.8, marginBottom: '0.75em', fontSize: '0.9em' }}>{currentStrategy.description}</p>
-            {currentStrategy.parameters.map((param: { name: string; type: string; description: string; default?: any }) => (
+            {currentStrategy.parameters.map((param) => (
               <div key={param.name} className="form-group">
                 <label>
                   {param.name}

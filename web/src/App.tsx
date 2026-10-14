@@ -7,7 +7,7 @@ import { ChargeDischargeChart } from './components/ChargeDischargeChart';
 import { CumulativePnLChart } from './components/CumulativePnLChart';
 import { DailyWindowsDisplay } from './components/DailyWindowsDisplay';
 import { BacktestRequest, BacktestResponse, CompareBacktestRequest, CompareBacktestResponse } from './services/api';
-import { apiService } from './services/api';
+import { apiService, getErrorMessage } from './services/api';
 
 function App() {
   const [result, setResult] = useState<BacktestResponse | CompareBacktestResponse | null>(null);
@@ -40,8 +40,8 @@ function App() {
         const response = await apiService.runBacktest(request);
         setResult(response);
       }
-    } catch (err: any) {
-      setError(err.response?.data?.error?.message || err.message || 'An error occurred');
+    } catch (err) {
+      setError(getErrorMessage(err, 'An error occurred'));
       console.error('Backtest error:', err);
     } finally {
       setIsLoading(false);
