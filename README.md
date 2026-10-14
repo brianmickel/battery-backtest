@@ -66,7 +66,7 @@ A backtesting system for battery trading strategies that simulates energy arbitr
 ## Technology Stack
 
 ### Backend
-- **Go 1.21+** - Core language
+- **Go 1.26+** - Core language
 - **Gin** - HTTP web framework
 - **YAML** - Configuration parsing
 - **Grid Status API** - Market data source
@@ -103,14 +103,14 @@ This project is licensed under the MIT License - see the [LICENSE](./LICENSE) fi
 ## Installation & Setup
 
 ### Prerequisites
-- Go 1.21 or higher
+- Go 1.26 or higher
 
 ## Quick Start
 
 ### Prerequisites
 
-- Go 1.21 or higher
-- Node.js 18+ and npm (for frontend)
+- Go 1.26 or higher
+- Node.js 20.19+ or 22.12+ and npm (for frontend)
 - Grid Status API key (get one at [gridstatus.io](https://gridstatus.io))
 
 ### Installation
