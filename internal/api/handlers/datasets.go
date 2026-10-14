@@ -64,16 +64,16 @@ func ListLocations(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"locations": locations,
+		"locations":  locations,
 		"updated_at": locationList.UpdatedAt,
-		"count": len(locations),
+		"count":      len(locations),
 	})
 }
 
 // loadLocationsForDataset loads locations from the static file
 func loadLocationsForDataset(datasetID string) (*data.LocationList, error) {
 	filePath := data.GetDefaultLocationsPath()
-	
+
 	locationList, err := data.LoadLocations(filePath)
 	if err != nil {
 		// If file doesn't exist, return empty list (not an error)

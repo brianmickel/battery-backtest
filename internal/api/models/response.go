@@ -4,22 +4,22 @@ import "time"
 
 // BacktestResponse represents the response from a backtest run
 type BacktestResponse struct {
-	ID      string           `json:"id,omitempty"`
-	Status  string           `json:"status"`
-	Summary BacktestSummary  `json:"summary"`
-	Ledger  []LedgerRow      `json:"ledger,omitempty"`
+	ID      string          `json:"id,omitempty"`
+	Status  string          `json:"status"`
+	Summary BacktestSummary `json:"summary"`
+	Ledger  []LedgerRow     `json:"ledger,omitempty"`
 }
 
 // BacktestSummary contains aggregated backtest results
 type BacktestSummary struct {
-	TotalPNL        float64         `json:"total_pnl"`
-	FinalSOC        float64         `json:"final_soc"`
-	TotalIntervals  int             `json:"total_intervals"`
-	BacktestWindow  TimeWindow      `json:"backtest_window"`
-	EnergyChargedMWh float64        `json:"energy_charged_mwh"`
-	EnergyDischargedMWh float64     `json:"energy_discharged_mwh"`
-	ChargeWindows   []ChargeWindow    `json:"charge_windows,omitempty"`    // Per-day charge windows
-	DischargeWindows []DischargeWindow    `json:"discharge_windows,omitempty"` // Per-day discharge windows
+	TotalPNL            float64           `json:"total_pnl"`
+	FinalSOC            float64           `json:"final_soc"`
+	TotalIntervals      int               `json:"total_intervals"`
+	BacktestWindow      TimeWindow        `json:"backtest_window"`
+	EnergyChargedMWh    float64           `json:"energy_charged_mwh"`
+	EnergyDischargedMWh float64           `json:"energy_discharged_mwh"`
+	ChargeWindows       []ChargeWindow    `json:"charge_windows,omitempty"`    // Per-day charge windows
+	DischargeWindows    []DischargeWindow `json:"discharge_windows,omitempty"` // Per-day discharge windows
 }
 
 // TimeWindow represents a time range
@@ -32,14 +32,14 @@ type TimeWindow struct {
 type ChargeWindow struct {
 	TimeWindow
 	AverageCostPerMWh float64 `json:"average_cost_per_mwh"` // Weighted average LMP during charging
-	EnergyMWh          float64 `json:"energy_mwh"`           // Total energy charged in this window
+	EnergyMWh         float64 `json:"energy_mwh"`           // Total energy charged in this window
 }
 
 // DischargeWindow represents a discharge window with average price
 type DischargeWindow struct {
 	TimeWindow
 	AveragePricePerMWh float64 `json:"average_price_per_mwh"` // Weighted average LMP during discharging
-	EnergyMWh          float64 `json:"energy_mwh"`             // Total energy discharged in this window
+	EnergyMWh          float64 `json:"energy_mwh"`            // Total energy discharged in this window
 }
 
 // LedgerRow represents one interval in the backtest ledger
@@ -94,9 +94,9 @@ type Ranking struct {
 
 // BatteryInfo represents information about a battery preset
 type BatteryInfo struct {
-	ID   string      `json:"id"`
-	Name string      `json:"name"`
-	File string      `json:"file"`
+	ID    string       `json:"id"`
+	Name  string       `json:"name"`
+	File  string       `json:"file"`
 	Specs BatterySpecs `json:"specs"`
 }
 
@@ -108,9 +108,9 @@ type BatterySpecs struct {
 
 // StrategyInfo represents information about a strategy
 type StrategyInfo struct {
-	Name        string           `json:"name"`
-	Description string           `json:"description"`
-	Parameters  []ParameterInfo  `json:"parameters"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Parameters  []ParameterInfo `json:"parameters"`
 }
 
 // ParameterInfo describes a strategy parameter

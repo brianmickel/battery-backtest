@@ -65,7 +65,7 @@ func main() {
 		wd, _ := os.Getwd()
 		batteryDir := batteryHandler.GetBatteryDir()
 		info, statErr := os.Stat(batteryDir)
-		
+
 		var entries []string
 		var entryDetails []map[string]interface{}
 		if dirEntries, err := os.ReadDir(batteryDir); err == nil {
@@ -73,16 +73,16 @@ func main() {
 				entries = append(entries, e.Name())
 				entryInfo, _ := e.Info()
 				entryDetails = append(entryDetails, map[string]interface{}{
-					"name":  e.Name(),
+					"name":   e.Name(),
 					"is_dir": e.IsDir(),
 					"size":   entryInfo.Size(),
 				})
 			}
 		}
-		
+
 		c.JSON(200, gin.H{
-			"working_directory": wd,
-			"battery_dir": batteryDir,
+			"working_directory":  wd,
+			"battery_dir":        batteryDir,
 			"battery_dir_exists": statErr == nil,
 			"battery_dir_is_dir": info != nil && info.IsDir(),
 			"stat_error": func() string {
@@ -91,9 +91,9 @@ func main() {
 				}
 				return ""
 			}(),
-			"entries": entries,
+			"entries":       entries,
 			"entry_details": entryDetails,
-			"entry_count": len(entries),
+			"entry_count":   len(entries),
 		})
 	})
 
@@ -118,13 +118,13 @@ func main() {
 	if staticDir == "" {
 		staticDir = "./web/dist"
 	}
-	
+
 	// Check if static directory exists
 	if _, err := os.Stat(staticDir); err == nil {
 		// Serve static assets
 		router.Static("/assets", staticDir+"/assets")
 		router.StaticFile("/favicon.ico", staticDir+"/favicon.ico")
-		
+
 		// Serve index.html for all non-API routes (SPA routing)
 		router.NoRoute(func(c *gin.Context) {
 			// Don't serve index.html for API routes

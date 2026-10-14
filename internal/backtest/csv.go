@@ -80,4 +80,3 @@ func fmtTime(t time.Time) string {
 func fmtFloat(x float64) string {
 	return strconv.FormatFloat(x, 'f', 6, 64)
 }
-

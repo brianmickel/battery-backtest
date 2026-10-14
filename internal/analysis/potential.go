@@ -174,4 +174,3 @@ func oracleProfitCanonical(intervals []model.LMPInterval) float64 {
 	}
 	return best
 }
-

@@ -15,11 +15,11 @@ import (
 //
 // All times are interpreted in the dataset's interval_start_local timezone.
 type ScheduleParams struct {
-	ChargeStart     string  // "HH:MM"
-	ChargeEnd       string  // "HH:MM" (optional; default = DischargeStart)
-	DischargeStart  string  // "HH:MM"
-	DischargeEnd    string  // "HH:MM" (optional; default = DischargeStart => zero-length)
-	ChargePowerMW   float64 // magnitude; will be treated as charge (negative)
+	ChargeStart      string  // "HH:MM"
+	ChargeEnd        string  // "HH:MM" (optional; default = DischargeStart)
+	DischargeStart   string  // "HH:MM"
+	DischargeEnd     string  // "HH:MM" (optional; default = DischargeStart => zero-length)
+	ChargePowerMW    float64 // magnitude; will be treated as charge (negative)
 	DischargePowerMW float64 // magnitude; treated as discharge (positive)
 }
 
@@ -111,4 +111,3 @@ func inWindow(tMins, start, end int) bool {
 	// wrap
 	return tMins >= start || tMins < end
 }
-

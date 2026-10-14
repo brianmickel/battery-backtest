@@ -84,7 +84,7 @@ func (h *RankHandler) RankNodes(c *gin.Context) {
 
 	// Fetch data for each location
 	byLoc := make(map[string][]model.LMPInterval)
-	
+
 	if len(locationIDs) > 0 {
 		// Fetch specific locations
 		for _, locID := range locationIDs {
@@ -101,9 +101,9 @@ func (h *RankHandler) RankNodes(c *gin.Context) {
 				if gsErr, ok := err.(*data.GridStatusError); ok {
 					// For ranking, we might want to continue with other locations
 					// but log the error. For now, return error on auth/rate limit issues
-					if gsErr.StatusCode == http.StatusForbidden || 
-					   gsErr.StatusCode == http.StatusUnauthorized ||
-					   gsErr.StatusCode == http.StatusTooManyRequests {
+					if gsErr.StatusCode == http.StatusForbidden ||
+						gsErr.StatusCode == http.StatusUnauthorized ||
+						gsErr.StatusCode == http.StatusTooManyRequests {
 						statusCode := http.StatusBadRequest
 						if gsErr.StatusCode == http.StatusForbidden || gsErr.StatusCode == http.StatusUnauthorized {
 							statusCode = http.StatusUnauthorized

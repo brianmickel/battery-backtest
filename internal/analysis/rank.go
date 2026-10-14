@@ -22,4 +22,3 @@ func RankByOracleProfit(byLocation map[string][]model.LMPInterval) []RankedPoten
 	})
 	return out
 }
-

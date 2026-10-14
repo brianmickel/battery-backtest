@@ -37,15 +37,15 @@ func NewBatteryHandler() *BatteryHandler {
 			dir = "./examples/batteries"
 		}
 	}
-	
+
 	// Convert to absolute path for reliability
 	absDir, err := filepath.Abs(dir)
 	if err == nil {
 		dir = absDir
 	}
-	
+
 	log.Printf("BatteryHandler: Using battery directory: %s", dir)
-	
+
 	return &BatteryHandler{
 		batteryDir: dir,
 	}
@@ -57,7 +57,7 @@ func (h *BatteryHandler) ListBatteries(c *gin.Context) {
 
 	// Log current state for debugging
 	log.Printf("BatteryHandler: Attempting to read directory: %s", h.batteryDir)
-	
+
 	// Check if directory exists first
 	if info, err := os.Stat(h.batteryDir); err != nil {
 		log.Printf("BatteryHandler: Directory stat error: %v", err)
@@ -93,7 +93,7 @@ func (h *BatteryHandler) ListBatteries(c *gin.Context) {
 	}
 
 	log.Printf("BatteryHandler: Found %d entries in %s", len(entries), h.batteryDir)
-	
+
 	// Log all entries for debugging
 	for i, entry := range entries {
 		log.Printf("BatteryHandler: Entry[%d]: %s (isDir: %v)", i, entry.Name(), entry.IsDir())
@@ -101,7 +101,7 @@ func (h *BatteryHandler) ListBatteries(c *gin.Context) {
 
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
-			log.Printf("BatteryHandler: Skipping entry %s (isDir: %v, hasYaml: %v)", 
+			log.Printf("BatteryHandler: Skipping entry %s (isDir: %v, hasYaml: %v)",
 				entry.Name(), entry.IsDir(), strings.HasSuffix(entry.Name(), ".yaml"))
 			continue
 		}
