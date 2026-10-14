@@ -182,7 +182,7 @@ export function BacktestForm({ onSubmit, isLoading }: BacktestFormProps) {
         const newJson = JSON.stringify(request, null, 2);
         setJsonText(newJson);
         setJsonError(null);
-      } catch (err) {
+      } catch {
         setJsonError('Error generating JSON');
       }
     }
