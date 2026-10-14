@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 
-	"battery-backtest/internal/config"
 	"battery-backtest/internal/backtest"
+	"battery-backtest/internal/config"
 	"battery-backtest/internal/model"
 	"battery-backtest/internal/strategy"
 )
@@ -192,4 +192,3 @@ func getNumber(m map[string]any, key string) (float64, bool) {
 		return 0, false
 	}
 }
-

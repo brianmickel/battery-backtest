@@ -76,4 +76,3 @@ func (e *Engine) Run(intervals []model.LMPInterval, batt *model.Battery, strat s
 		FinalSOC: batt.State.SOC,
 	}, nil
 }
-

@@ -13,7 +13,7 @@ import (
 
 // CacheEntry represents a cached API response
 type CacheEntry struct {
-	Response *model.GridStatusLMPResponse
+	Response  *model.GridStatusLMPResponse
 	ExpiresAt time.Time
 }
 
@@ -23,10 +23,10 @@ type CacheEntry struct {
 //
 // Caching API responses may violate Grid Status Terms of Use.
 // Before enabling this feature:
-//   1. Review Grid Status Terms of Use
-//   2. Confirm caching is allowed for your use case
-//   3. Only enable in local development environments
-//   4. Never enable in production without explicit permission
+//  1. Review Grid Status Terms of Use
+//  2. Confirm caching is allowed for your use case
+//  3. Only enable in local development environments
+//  4. Never enable in production without explicit permission
 //
 // This cache is automatically disabled when API_ENV=production.
 type ResponseCache struct {
@@ -49,7 +49,7 @@ func GetCache() *ResponseCache {
 	if os.Getenv("ENABLE_GRIDSTATUS_CACHE") != "true" {
 		return nil
 	}
-	
+
 	// Additional safety check: only enable in development
 	// This prevents accidental enabling in production
 	env := os.Getenv("API_ENV")
@@ -64,16 +64,16 @@ func GetCache() *ResponseCache {
 				ttl = parsed
 			}
 		}
-		
+
 		globalCache = &ResponseCache{
 			store: make(map[string]*CacheEntry),
 			ttl:   ttl,
 		}
-		
+
 		// Start cleanup goroutine
 		go globalCache.cleanup()
 	})
-	
+
 	return globalCache
 }
 
@@ -82,20 +82,20 @@ func (c *ResponseCache) Get(key string) (*model.GridStatusLMPResponse, bool) {
 	if c == nil {
 		return nil, false
 	}
-	
+
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	
+
 	entry, exists := c.store[key]
 	if !exists {
 		return nil, false
 	}
-	
+
 	// Check if expired
 	if time.Now().After(entry.ExpiresAt) {
 		return nil, false
 	}
-	
+
 	return entry.Response, true
 }
 
@@ -104,10 +104,10 @@ func (c *ResponseCache) Set(key string, response *model.GridStatusLMPResponse) {
 	if c == nil {
 		return
 	}
-	
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	
+
 	c.store[key] = &CacheEntry{
 		Response:  response,
 		ExpiresAt: time.Now().Add(c.ttl),
@@ -119,10 +119,10 @@ func (c *ResponseCache) Clear() {
 	if c == nil {
 		return
 	}
-	
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	
+
 	c.store = make(map[string]*CacheEntry)
 }
 
@@ -130,7 +130,7 @@ func (c *ResponseCache) Clear() {
 func (c *ResponseCache) cleanup() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
-	
+
 	for range ticker.C {
 		c.mu.Lock()
 		now := time.Now()
@@ -154,7 +154,7 @@ func GenerateCacheKey(params QueryLocationParams) string {
 		params.Timezone,
 		params.Download,
 	)
-	
+
 	// Hash the key to keep it reasonably sized
 	hash := sha256.Sum256([]byte(keyStr))
 	return hex.EncodeToString(hash[:])

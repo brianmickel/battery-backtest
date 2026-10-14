@@ -20,4 +20,3 @@ func ActionFromPowerMW(powerMW float64) Action {
 		return ActionIdle
 	}
 }
-

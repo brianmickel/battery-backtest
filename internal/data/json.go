@@ -30,4 +30,3 @@ func GroupByLocation(resp *model.GridStatusLMPResponse) map[string][]model.LMPIn
 	}
 	return out
 }
-

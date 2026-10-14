@@ -13,13 +13,13 @@ import (
 // - SOC: fraction 0..1
 // - DegradationCostPerMWh: $/MWh throughput (charge + discharge)
 type BatteryParams struct {
-	EnergyCapacityMWh      float64
-	PowerCapacityMW        float64
-	ChargeEfficiency       float64
-	DischargeEfficiency    float64
-	MinSOC                 float64
-	MaxSOC                 float64
-	DegradationCostPerMWh  float64
+	EnergyCapacityMWh     float64
+	PowerCapacityMW       float64
+	ChargeEfficiency      float64
+	DischargeEfficiency   float64
+	MinSOC                float64
+	MaxSOC                float64
+	DegradationCostPerMWh float64
 }
 
 // BatteryState captures mutable state.
@@ -37,7 +37,7 @@ type Battery struct {
 func NewBattery(params BatteryParams, initialSOC float64) (*Battery, error) {
 	b := &Battery{
 		Params: params,
-		State: BatteryState{SOC: initialSOC},
+		State:  BatteryState{SOC: initialSOC},
 	}
 	if err := b.Validate(); err != nil {
 		return nil, err
@@ -79,13 +79,13 @@ type Dispatch struct {
 
 // IntervalResult captures what happened in one interval.
 type IntervalResult struct {
-	PowerMW        float64 // realized power (may be clipped)
-	EnergyToGridMWh float64 // discharge energy delivered to grid
+	PowerMW           float64 // realized power (may be clipped)
+	EnergyToGridMWh   float64 // discharge energy delivered to grid
 	EnergyFromGridMWh float64 // charge energy pulled from grid
-	ThroughputMWh  float64 // EnergyFromGridMWh + EnergyToGridMWh
-	SOCStart       float64
-	SOCEnd         float64
-	PNL            float64 // $ for this interval (incl degradation)
+	ThroughputMWh     float64 // EnergyFromGridMWh + EnergyToGridMWh
+	SOCStart          float64
+	SOCEnd            float64
+	PNL               float64 // $ for this interval (incl degradation)
 }
 
 // ClipDispatch enforces the power limit, without applying SOC constraints.
@@ -205,4 +205,3 @@ func clamp01(x float64) float64 {
 	}
 	return x
 }
-

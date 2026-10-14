@@ -9,11 +9,11 @@ import (
 
 // Location represents a location/node from Grid Status
 type Location struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Type        string `json:"type"`        // e.g., "GNODE", "LNODE"
-	Market      string `json:"market"`      // e.g., "CAISO"
-	DatasetID   string `json:"dataset_id"`  // Dataset this location belongs to
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Type      string `json:"type"`       // e.g., "GNODE", "LNODE"
+	Market    string `json:"market"`     // e.g., "CAISO"
+	DatasetID string `json:"dataset_id"` // Dataset this location belongs to
 }
 
 // LocationList represents a collection of locations

@@ -56,7 +56,7 @@ func (e *GridStatusError) Error() string {
 }
 
 // QueryLocation fetches LMP data for a specific location from Grid Status API.
-// 
+//
 // WARNING: If caching is enabled (ENABLE_GRIDSTATUS_CACHE=true), responses may be cached.
 // Caching is ONLY for LOCAL DEVELOPMENT. Check Grid Status Terms of Use before enabling
 // in any production-like environment. Caching API responses may violate their terms.
