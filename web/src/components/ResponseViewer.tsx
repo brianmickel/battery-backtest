@@ -2,7 +2,7 @@ import { useState } from 'react';
 import JsonView from '@uiw/react-json-view';
 
 interface ResponseViewerProps {
-  data: any;
+  data: object;
 }
 
 export function ResponseViewer({ data }: ResponseViewerProps) {
