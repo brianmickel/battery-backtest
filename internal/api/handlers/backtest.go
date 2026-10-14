@@ -69,9 +69,10 @@ func (h *BacktestHandler) RunBacktest(c *gin.Context) {
 		// Handle Grid Status API errors
 		if gsErr, ok := err.(*data.GridStatusError); ok {
 			statusCode := http.StatusBadRequest
-			if gsErr.StatusCode == http.StatusForbidden || gsErr.StatusCode == http.StatusUnauthorized {
+			switch gsErr.StatusCode {
+			case http.StatusForbidden, http.StatusUnauthorized:
 				statusCode = http.StatusUnauthorized
-			} else if gsErr.StatusCode == http.StatusTooManyRequests {
+			case http.StatusTooManyRequests:
 				statusCode = http.StatusTooManyRequests
 			}
 			c.JSON(statusCode, models.ErrorResponse{
@@ -202,9 +203,10 @@ func (h *BacktestHandler) CompareBacktests(c *gin.Context) {
 		// Handle Grid Status API errors
 		if gsErr, ok := err.(*data.GridStatusError); ok {
 			statusCode := http.StatusBadRequest
-			if gsErr.StatusCode == http.StatusForbidden || gsErr.StatusCode == http.StatusUnauthorized {
+			switch gsErr.StatusCode {
+			case http.StatusForbidden, http.StatusUnauthorized:
 				statusCode = http.StatusUnauthorized
-			} else if gsErr.StatusCode == http.StatusTooManyRequests {
+			case http.StatusTooManyRequests:
 				statusCode = http.StatusTooManyRequests
 			}
 			c.JSON(statusCode, models.ErrorResponse{
@@ -278,11 +280,6 @@ func (h *BacktestHandler) fetchData(ds models.DataSourceConfig, apiKey string) (
 
 	// Create a new client with the API key from the request
 	client := data.NewGridStatusClient(apiKey, "")
-
-	timezone := ds.Timezone
-	if timezone == "" {
-		timezone = "market"
-	}
 
 	resp, err := client.QueryLocationByString(
 		ds.DatasetID,
