@@ -1,36 +1,17 @@
-import { BacktestSummary } from '../services/api';
+import type { BacktestSummary } from '../services/api';
+import { clockLabel, formatCoverage, formatCurrency, formatNumber, formatTimestamp } from '../presentation/format';
 
 interface MetricsDisplayProps {
   summary: BacktestSummary;
 }
 
 export function MetricsDisplay({ summary }: MetricsDisplayProps) {
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(value);
-  };
-
-  const formatNumber = (value: number, decimals: number = 2) => {
-    return new Intl.NumberFormat('en-US', {
-      minimumFractionDigits: decimals,
-      maximumFractionDigits: decimals,
-    }).format(value);
-  };
-
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString();
-  };
-
   return (
     <div className="card" style={{ backgroundColor: '#1a2a1a' }}>
       <h2 style={{ marginTop: 0, marginBottom: '0.75em' }}>Summary Metrics</h2>
-      <div style={{ 
-        display: 'grid', 
-        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
         gap: '1em',
         marginTop: '0.5em'
       }}>
@@ -38,14 +19,21 @@ export function MetricsDisplay({ summary }: MetricsDisplayProps) {
           <div className={`metric-large ${summary.total_pnl >= 0 ? 'metric-positive' : 'metric-negative'}`}>
             {formatCurrency(summary.total_pnl)}
           </div>
-          <div className="metric-label">Total P&L</div>
+          <div className="metric-label">Net Dispatch P&amp;L</div>
         </div>
 
         <div>
           <div className="metric-large" style={{ fontSize: '2rem' }}>
-            {(summary.final_soc * 100).toFixed(1)}%
+            {formatNumber(summary.initial_soc * 100, 1)}%
           </div>
-          <div className="metric-label">Final SOC</div>
+          <div className="metric-label">Initial SOC · {formatNumber(summary.initial_energy_mwh)} MWh stored</div>
+        </div>
+
+        <div>
+          <div className="metric-large" style={{ fontSize: '2rem' }}>
+            {formatNumber(summary.final_soc * 100, 1)}%
+          </div>
+          <div className="metric-label">Final SOC · {formatNumber(summary.final_energy_mwh)} MWh stored</div>
         </div>
 
         <div>
@@ -64,21 +52,23 @@ export function MetricsDisplay({ summary }: MetricsDisplayProps) {
 
         <div>
           <div className="metric-large" style={{ fontSize: '2rem' }}>
-            {summary.total_intervals.toLocaleString()}
+            {formatNumber(summary.total_intervals, 0)}
           </div>
           <div className="metric-label">Total Intervals</div>
         </div>
 
         <div>
           <div style={{ fontSize: '1rem', marginBottom: '0.25em' }}>
-            {formatDate(summary.backtest_window.start)}
+            {formatTimestamp(summary.backtest_window.start, summary.timezone)}
           </div>
           <div style={{ fontSize: '1rem' }}>
-            {formatDate(summary.backtest_window.end)}
+            {formatTimestamp(summary.backtest_window.end, summary.timezone)}
           </div>
-          <div className="metric-label">Backtest Window</div>
+          <div className="metric-label">Backtest Window · {clockLabel(summary.timezone)}</div>
         </div>
       </div>
+      <p>{formatCoverage(summary)} ({formatNumber(summary.gap_count, 0)} {summary.gap_count === 1 ? 'gap' : 'gaps'}).</p>
+      <p>Net dispatch cash flow includes degradation. Initial stored energy has no acquisition charge; final stored energy has zero salvage value.</p>
     </div>
   );
 }
