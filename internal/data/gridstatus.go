@@ -1,267 +1,210 @@
 package data
 
 import (
-	"encoding/json"
-	"fmt"
-	"log"
+	"bytes"
+	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"battery-backtest/internal/model"
 )
 
-// GridStatusClient provides methods to fetch data from the Grid Status API.
+const (
+	providerTimeout      = 30 * time.Second
+	maxProviderBodyBytes = 64 << 20
+)
+
+// GridStatusClient owns request policy; credentials belong to individual calls.
 type GridStatusClient struct {
-	APIKey  string
-	BaseURL string
-	Client  *http.Client
+	client  http.Client
+	baseURL url.URL
 }
 
-// NewGridStatusClient creates a new Grid Status API client.
-// If baseURL is empty, defaults to "https://api.gridstatus.io".
-func NewGridStatusClient(apiKey string, baseURL string) *GridStatusClient {
+// NewGridStatusClient copies client without changing its transport, timeout, or
+// cookie jar. A nil client uses http.DefaultClient; an empty URL uses Grid Status.
+func NewGridStatusClient(client *http.Client, baseURL string) (*GridStatusClient, error) {
+	if client == nil {
+		client = http.DefaultClient
+	}
 	if baseURL == "" {
 		baseURL = "https://api.gridstatus.io"
 	}
-	return &GridStatusClient{
-		APIKey:  apiKey,
-		BaseURL: baseURL,
-		Client: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+	base, err := url.Parse(baseURL)
+	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" ||
+		base.User != nil || base.RawQuery != "" || base.ForceQuery || base.Fragment != "" || base.Opaque != "" {
+		return nil, errors.New("provider base URL must be an absolute HTTP(S) URL without credentials, query, or fragment")
 	}
+	owned := *client
+	owned.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &GridStatusClient{client: owned, baseURL: *base}, nil
 }
 
-// QueryLocationParams defines parameters for querying location data.
-type QueryLocationParams struct {
-	DatasetID  string    // e.g., "caiso_lmp_real_time_5_min"
-	LocationID string    // e.g., "MOSSLD_2_PSP1" or "SV_LNODER6A"
-	StartTime  time.Time // Start of time range
-	EndTime    time.Time // End of time range
-	Timezone   string    // e.g., "market", "UTC" (default: "market")
-	Download   bool      // If true, sets download=true query param
+// Query selects one location over a half-open range of calendar dates.
+type Query struct {
+	DatasetID, LocationID string
+	StartDate, EndDate    string
+	Clock                 string
 }
 
-// GridStatusError represents an error from the Grid Status API
+// GridStatusError retains upstream status and retry information. Its message is
+// safe to log; Unwrap preserves transport, decoding, and context error identity.
 type GridStatusError struct {
 	StatusCode int
 	Code       string
 	Message    string
-	RetryAfter string // For rate limit errors
+	RetryAfter string
+	cause      error
 }
 
-func (e *GridStatusError) Error() string {
-	return e.Message
-}
+func (e *GridStatusError) Error() string { return e.Message }
+func (e *GridStatusError) Unwrap() error { return e.cause }
 
-// QueryLocation fetches LMP data for a specific location from Grid Status API.
-//
-// WARNING: If caching is enabled (ENABLE_GRIDSTATUS_CACHE=true), responses may be cached.
-// Caching is ONLY for LOCAL DEVELOPMENT. Check Grid Status Terms of Use before enabling
-// in any production-like environment. Caching API responses may violate their terms.
-func (c *GridStatusClient) QueryLocation(params QueryLocationParams) (*model.GridStatusLMPResponse, error) {
-	// Validate API key before making request
-	if err := c.validateAPIKey(); err != nil {
+// Fetch authenticates each request independently and returns a normalized series.
+func (c *GridStatusClient) Fetch(ctx context.Context, apiKey string, query Query) ([]model.LMPInterval, error) {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if strings.TrimSpace(apiKey) == "" {
+		return nil, &ValidationError{Field: "api_key", Message: "is required"}
+	}
+	if err := validateQuery(query, time.Now().UTC()); err != nil {
+		return nil, err
+	}
+	if query.Clock == "" {
+		query.Clock = "market"
+	}
+	ctx, cancel := context.WithTimeout(ctx, providerTimeout)
+	defer cancel()
 
-	// Check cache first (only if enabled for development)
-	cache := GetCache()
-	if cache != nil {
-		cacheKey := GenerateCacheKey(params)
-		if cached, found := cache.Get(cacheKey); found {
-			// Return cached response
-			dataCount := 0
-			if cached.Data != nil {
-				dataCount = len(cached.Data)
-			}
-			log.Printf("[GridStatus] Cache hit: Using cached response with %d intervals (dataset=%s, location=%s, start=%s, end=%s)",
-				dataCount, params.DatasetID, params.LocationID,
-				params.StartTime.Format("2006-01-02"), params.EndTime.Format("2006-01-02"))
-			return cached, nil
-		}
-	}
-	if params.DatasetID == "" {
-		return nil, fmt.Errorf("dataset_id is required")
-	}
-	if params.LocationID == "" {
-		return nil, fmt.Errorf("location_id is required")
-	}
-	if params.StartTime.IsZero() || params.EndTime.IsZero() {
-		return nil, fmt.Errorf("start_time and end_time are required")
-	}
-	if params.StartTime.After(params.EndTime) {
-		return nil, fmt.Errorf("start_time must be before end_time")
-	}
-
-	// Build URL: /v1/datasets/{dataset_id}/query/location/{location_id}
-	path := fmt.Sprintf("/v1/datasets/%s/query/location/%s", params.DatasetID, params.LocationID)
-	u, err := url.Parse(c.BaseURL + path)
+	u := c.queryURL(query)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return nil, fmt.Errorf("invalid base URL: %w", err)
+		return nil, providerFailure(ctx, "could not create provider request", err)
 	}
-
-	// Build query parameters
-	q := u.Query()
-	q.Set("start_time", params.StartTime.Format("2006-01-02"))
-	q.Set("end_time", params.EndTime.Format("2006-01-02"))
-	if params.Timezone != "" {
-		q.Set("timezone", params.Timezone)
-	} else {
-		q.Set("timezone", "market")
-	}
-	if params.Download {
-		q.Set("download", "true")
-	}
-	u.RawQuery = q.Encode()
-
-	// Log the request
-	log.Printf("[GridStatus] Request: GET %s (dataset=%s, location=%s, start=%s, end=%s, timezone=%s)",
-		u.Path,
-		params.DatasetID,
-		params.LocationID,
-		params.StartTime.Format("2006-01-02"),
-		params.EndTime.Format("2006-01-02"),
-		q.Get("timezone"))
-
-	// Create HTTP request
-	req, err := http.NewRequest("GET", u.String(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Set API key header
-	req.Header.Set("x-api-key", c.APIKey)
+	req.Header.Set("x-api-key", apiKey)
 	req.Header.Set("Accept", "application/json")
-
-	// Execute request
-	startTime := time.Now()
-	resp, err := c.Client.Do(req)
-	duration := time.Since(startTime)
+	resp, err := c.client.Do(req)
 	if err != nil {
-		log.Printf("[GridStatus] Request failed: %v (duration: %v)", err, duration)
-		return nil, fmt.Errorf("failed to execute request: %w", err)
+		return nil, providerFailure(ctx, "provider request failed", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	// Log the response
-	log.Printf("[GridStatus] Response: %d %s (duration: %v, dataset=%s, location=%s)",
-		resp.StatusCode,
-		resp.Status,
-		duration,
-		params.DatasetID,
-		params.LocationID)
-
-	// Check status code and handle specific errors
-	switch resp.StatusCode {
-	case http.StatusOK:
-		// Success, continue
-	case http.StatusForbidden:
-		// 403: Invalid API key or insufficient permissions
-		log.Printf("[GridStatus] Error: 403 Forbidden - Invalid API key or insufficient permissions (dataset=%s, location=%s)",
-			params.DatasetID, params.LocationID)
-		return nil, &GridStatusError{
-			StatusCode: resp.StatusCode,
-			Code:       "INVALID_API_KEY",
-			Message:    "Invalid API key or insufficient permissions",
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		failure := &GridStatusError{StatusCode: resp.StatusCode, Code: "UPSTREAM_UNAVAILABLE", Message: "provider returned an unsuccessful status"}
+		switch resp.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			failure.Code, failure.Message = "UPSTREAM_AUTH", "provider authentication failed"
+		case http.StatusTooManyRequests:
+			failure.Code, failure.Message = "UPSTREAM_RATE_LIMIT", "provider rate limit exceeded"
+			failure.RetryAfter = resp.Header.Get("Retry-After")
 		}
-	case http.StatusTooManyRequests:
-		// 429: Rate limit exceeded
-		retryAfter := resp.Header.Get("Retry-After")
-		log.Printf("[GridStatus] Error: 429 Rate Limit Exceeded - Retry after: %s (dataset=%s, location=%s)",
-			retryAfter, params.DatasetID, params.LocationID)
-		return nil, &GridStatusError{
-			StatusCode: resp.StatusCode,
-			Code:       "RATE_LIMIT_EXCEEDED",
-			Message:    fmt.Sprintf("Rate limit exceeded. Retry after: %s", retryAfter),
-			RetryAfter: retryAfter,
+		return nil, failure
+	}
+	if resp.ContentLength > maxProviderBodyBytes {
+		return nil, providerFailure(ctx, "provider response exceeds the 64 MiB limit", nil)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxProviderBodyBytes+1))
+	if err != nil {
+		return nil, providerFailure(ctx, "could not read provider response", err)
+	}
+	if len(body) > maxProviderBodyBytes {
+		return nil, providerFailure(ctx, "provider response exceeds the 64 MiB limit", nil)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	rows, err := DecodeGridStatusJSON(bytes.NewReader(body))
+	if err != nil {
+		var validation *ValidationError
+		if errors.As(err, &validation) || errors.Is(err, ErrIntervalLimit) {
+			return nil, err
 		}
-	case http.StatusUnauthorized:
-		// 401: Unauthorized (bad API key)
-		log.Printf("[GridStatus] Error: 401 Unauthorized - Invalid API key (dataset=%s, location=%s)",
-			params.DatasetID, params.LocationID)
-		return nil, &GridStatusError{
-			StatusCode: resp.StatusCode,
-			Code:       "UNAUTHORIZED",
-			Message:    "Unauthorized: Invalid API key",
+		return nil, providerFailure(ctx, "provider response is not valid market JSON", err)
+	}
+	rows, err = NormalizeSeries(rows, query.Clock)
+	if err != nil {
+		return nil, err
+	}
+	for index, row := range rows {
+		if row.Location != query.LocationID {
+			return nil, withIntervalIndex(index, &ValidationError{Field: "location", Message: "does not match the requested location"})
 		}
-	default:
-		// Other errors
-		log.Printf("[GridStatus] Error: %d %s (dataset=%s, location=%s)",
-			resp.StatusCode, resp.Status, params.DatasetID, params.LocationID)
-		return nil, &GridStatusError{
-			StatusCode: resp.StatusCode,
-			Code:       "API_ERROR",
-			Message:    fmt.Sprintf("API returned status %d: %s", resp.StatusCode, resp.Status),
+		start, end := row.IntervalStartLocal, row.IntervalEndLocal
+		if query.Clock == "UTC" {
+			start, end = row.IntervalStartUTC, row.IntervalEndUTC
+		}
+		startDate, endDate := start.Format(time.DateOnly), end.Format(time.DateOnly)
+		if startDate < query.StartDate || startDate >= query.EndDate || endDate < query.StartDate || endDate > query.EndDate ||
+			(endDate == query.EndDate && (end.Hour() != 0 || end.Minute() != 0 || end.Second() != 0 || end.Nanosecond() != 0)) {
+			return nil, withIntervalIndex(index, &ValidationError{Message: "is outside the requested date range"})
 		}
 	}
-
-	// Parse JSON response
-	var result model.GridStatusLMPResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		log.Printf("[GridStatus] Error decoding response: %v (dataset=%s, location=%s)", err, params.DatasetID, params.LocationID)
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-
-	// Log successful response with data count
-	dataCount := 0
-	if result.Data != nil {
-		dataCount = len(result.Data)
-	}
-	log.Printf("[GridStatus] Success: Received %d intervals (dataset=%s, location=%s)",
-		dataCount, params.DatasetID, params.LocationID)
-
-	// Cache the response if caching is enabled (development only)
-	if cache := GetCache(); cache != nil {
-		cacheKey := GenerateCacheKey(params)
-		cache.Set(cacheKey, &result)
-		log.Printf("[GridStatus] Cached response (dataset=%s, location=%s)", params.DatasetID, params.LocationID)
-	}
-
-	return &result, nil
+	return rows, nil
 }
 
-// validateAPIKey validates that the API key is present and not obviously invalid
-func (c *GridStatusClient) validateAPIKey() error {
-	if c.APIKey == "" {
-		return &GridStatusError{
-			StatusCode: 0,
-			Code:       "MISSING_API_KEY",
-			Message:    "API key is required",
+func (c *GridStatusClient) queryURL(query Query) url.URL {
+	u := c.baseURL
+	path := strings.TrimRight(u.EscapedPath(), "/") + "/v1/datasets/" + escapeSegment(query.DatasetID) + "/query/location/" + escapeSegment(query.LocationID)
+	u.Path, _ = url.PathUnescape(path)
+	u.RawPath = path
+	u.RawQuery = url.Values{
+		"start_time": {query.StartDate},
+		"end_time":   {query.EndDate},
+		"timezone":   {query.Clock},
+		"download":   {"true"},
+	}.Encode()
+	return u
+}
+
+func escapeSegment(value string) string {
+	if value == "." || value == ".." {
+		return strings.ReplaceAll(value, ".", "%2E")
+	}
+	return url.PathEscape(value)
+}
+
+func validateQuery(query Query, now time.Time) error {
+	for _, id := range []struct{ field, value string }{{"dataset_id", query.DatasetID}, {"location_id", query.LocationID}} {
+		if strings.TrimSpace(id.value) == "" {
+			return &ValidationError{Field: id.field, Message: "is required"}
 		}
 	}
-	// Basic validation: API key should not be just whitespace
-	// Grid Status API keys are typically non-empty strings
-	// We don't validate format here, but reject obviously bad keys
-	if len(c.APIKey) < 10 {
-		return &GridStatusError{
-			StatusCode: 0,
-			Code:       "INVALID_API_KEY_FORMAT",
-			Message:    "API key appears to be invalid (too short)",
-		}
+	if query.Clock != "" && query.Clock != "market" && query.Clock != "UTC" {
+		return &ValidationError{Field: "timezone", Message: "must be market or UTC"}
+	}
+	start, err := time.Parse(time.DateOnly, query.StartDate)
+	if err != nil || start.Year() < 1 || start.Format(time.DateOnly) != query.StartDate {
+		return &ValidationError{Field: "start_date", Message: "must be a Gregorian date in YYYY-MM-DD format"}
+	}
+	end, err := time.Parse(time.DateOnly, query.EndDate)
+	if err != nil || end.Year() < 1 || end.Format(time.DateOnly) != query.EndDate {
+		return &ValidationError{Field: "end_date", Message: "must be a Gregorian date in YYYY-MM-DD format"}
+	}
+	if !start.Before(end) {
+		return &ValidationError{Field: "end_date", Message: "must be after start_date (exclusive end)"}
+	}
+	if end.After(start.AddDate(0, 0, 60)) {
+		return &ValidationError{Field: "end_date", Message: "range must not exceed 60 calendar days"}
+	}
+	if query.EndDate > now.UTC().Format(time.DateOnly) {
+		return &ValidationError{Field: "end_date", Message: "must not be after today's UTC date"}
 	}
 	return nil
 }
 
-// QueryLocationByString is a convenience method that parses date strings.
-// startDate and endDate should be in "YYYY-MM-DD" format.
-func (c *GridStatusClient) QueryLocationByString(datasetID, locationID, startDate, endDate string) (*model.GridStatusLMPResponse, error) {
-	startTime, err := time.Parse("2006-01-02", startDate)
-	if err != nil {
-		return nil, fmt.Errorf("invalid start_date format (expected YYYY-MM-DD): %w", err)
+func providerFailure(ctx context.Context, message string, cause error) error {
+	if err := ctx.Err(); err != nil && !errors.Is(cause, err) {
+		cause = errors.Join(cause, err)
 	}
-	endTime, err := time.Parse("2006-01-02", endDate)
-	if err != nil {
-		return nil, fmt.Errorf("invalid end_date format (expected YYYY-MM-DD): %w", err)
+	code := "UPSTREAM_UNAVAILABLE"
+	if errors.Is(cause, context.DeadlineExceeded) {
+		code = "DEADLINE_EXCEEDED"
 	}
-
-	return c.QueryLocation(QueryLocationParams{
-		DatasetID:  datasetID,
-		LocationID: locationID,
-		StartTime:  startTime,
-		EndTime:    endTime,
-		Timezone:   "market",
-		Download:   true,
-	})
+	return &GridStatusError{Code: code, Message: message, cause: cause}
 }
