@@ -1,300 +1,163 @@
 package strategy
 
 import (
+	"context"
 	"fmt"
 	"math"
-	"time"
+	"sort"
 
+	"battery-backtest/internal/config"
 	"battery-backtest/internal/model"
 )
 
-// OracleStrategy is a (near) profit-maximizing "perfect foresight" strategy.
-// It computes a dispatch plan up-front using dynamic programming on a discretized SOC grid.
-// The strategy optimizes each day independently, starting from initialSOC at the start of each day,
-// to maximize daily profit from charging during low-price periods and discharging during high-price periods.
-//
-// Notes:
-// - This is designed to be a practical "upper bound" and ranking tool.
-// - Each day is optimized independently, allowing the battery to fully utilize its capacity each day.
-// - Exact LP/MILP solvers can be integrated later if needed.
-type OracleStrategy struct {
-	plan []model.Dispatch
-}
+// OracleStrategy is an approximate foresight optimizer over one continuous
+// horizon. The feasible grid restricts profit; it is not an economic upper bound.
+type OracleStrategy struct{ plan []model.Dispatch }
 
-type OracleParams struct {
-	// SocSteps controls SOC discretization between [MinSOC, MaxSOC].
-	// Higher = more accurate, slower.
-	SocSteps int
-
-	// PowerSteps controls action discretization between [-Pmax, +Pmax].
-	// Higher = more accurate, slower.
-	PowerSteps int
-}
+type OracleParams struct{ SocSteps, PowerSteps int }
 
 func NewOracleStrategy(intervals []model.LMPInterval, params model.BatteryParams, initialSOC float64, cfg OracleParams) (*OracleStrategy, error) {
-	if len(intervals) == 0 {
-		return nil, fmt.Errorf("no intervals")
-	}
 	if cfg.SocSteps <= 0 {
 		cfg.SocSteps = 200
 	}
 	if cfg.PowerSteps <= 0 {
 		cfg.PowerSteps = 10
 	}
-
-	// Group intervals by day and optimize each day independently
-	// This maximizes profit per day rather than across the entire period
-	plan, err := optimizeDPByDay(intervals, params, initialSOC, cfg.SocSteps, cfg.PowerSteps)
+	battery, err := model.NewBattery(params, initialSOC)
 	if err != nil {
 		return nil, err
 	}
-	return &OracleStrategy{plan: plan}, nil
+	built, err := Build(context.Background(), config.OracleConfig{SOCSteps: cfg.SocSteps, PowerSteps: cfg.PowerSteps}, intervals, battery)
+	if err != nil {
+		return nil, err
+	}
+	return built.(*OracleStrategy), nil
 }
 
 func (s *OracleStrategy) Name() string { return "oracle" }
-
 func (s *OracleStrategy) Decide(ctx Context) model.Dispatch {
 	if ctx.Index < 0 || ctx.Index >= len(s.plan) {
-		return model.Dispatch{PowerMW: 0}
+		return model.Dispatch{}
 	}
 	return s.plan[ctx.Index]
 }
 
-// optimizeDPByDay groups intervals by day and optimizes each day independently.
-// This maximizes profit per day, starting from initialSOC at the start of each day.
-// Since intervals are already sorted chronologically, we can group them in a single pass.
-func optimizeDPByDay(intervals []model.LMPInterval, p model.BatteryParams, initialSOC float64, socSteps int, powerSteps int) ([]model.Dispatch, error) {
-	if len(intervals) == 0 {
-		return nil, fmt.Errorf("no intervals")
-	}
-
-	// Group intervals by day (intervals are already sorted chronologically)
-	var dayIntervals []model.LMPInterval
-	var fullPlan []model.Dispatch
-	var currentDay time.Time
-
-	for i, interval := range intervals {
-		intervalDay := time.Date(
-			interval.IntervalStartLocal.Year(),
-			interval.IntervalStartLocal.Month(),
-			interval.IntervalStartLocal.Day(),
-			0, 0, 0, 0,
-			interval.IntervalStartLocal.Location(),
-		)
-
-		// If this is a new day (or the first interval), optimize the previous day
-		if i > 0 && !intervalDay.Equal(currentDay) {
-			// Optimize the previous day
-			dayPlan, err := optimizeDP(dayIntervals, p, initialSOC, socSteps, powerSteps)
-			if err != nil {
-				return nil, fmt.Errorf("error optimizing day %s: %w", currentDay.Format("2006-01-02"), err)
-			}
-			fullPlan = append(fullPlan, dayPlan...)
-			dayIntervals = dayIntervals[:0] // Reset for new day
+func socGrid(p model.BatteryParams, initial float64, steps int) ([]float64, int) {
+	grid := make([]float64, 0, steps+2)
+	for i := 0; i <= steps; i++ {
+		soc := p.MinSOC + float64(i)/float64(steps)*(p.MaxSOC-p.MinSOC)
+		if i == steps {
+			soc = p.MaxSOC
 		}
-
-		// Start tracking a new day
-		if len(dayIntervals) == 0 {
-			currentDay = intervalDay
+		if len(grid) == 0 || soc != grid[len(grid)-1] {
+			grid = append(grid, soc)
 		}
-
-		dayIntervals = append(dayIntervals, interval)
 	}
-
-	// Optimize the last day
-	if len(dayIntervals) > 0 {
-		dayPlan, err := optimizeDP(dayIntervals, p, initialSOC, socSteps, powerSteps)
-		if err != nil {
-			return nil, fmt.Errorf("error optimizing day %s: %w", currentDay.Format("2006-01-02"), err)
-		}
-		fullPlan = append(fullPlan, dayPlan...)
+	index := sort.SearchFloat64s(grid, initial)
+	if index == len(grid) || grid[index] != initial {
+		grid = append(grid, 0)
+		copy(grid[index+1:], grid[index:])
+		grid[index] = initial
 	}
-
-	// Validate that plan length matches intervals length
-	if len(fullPlan) != len(intervals) {
-		return nil, fmt.Errorf("plan length (%d) does not match intervals length (%d)", len(fullPlan), len(intervals))
-	}
-
-	return fullPlan, nil
+	return grid, index
 }
 
-func optimizeDP(intervals []model.LMPInterval, p model.BatteryParams, initialSOC float64, socSteps int, powerSteps int) ([]model.Dispatch, error) {
-	// SOC grid is [MinSOC, MaxSOC] in socSteps increments.
-	if socSteps < 2 {
-		socSteps = 2
+// projectTransition rounds reachable energy toward its source, then asks the
+// shared physical transition to price only that projected energy transfer.
+func projectTransition(grid []float64, source int, desiredPower float64, row model.LMPInterval, p model.BatteryParams) (int, model.IntervalResult, error) {
+	state := model.BatteryState{SOC: grid[source]}
+	reachable, _, err := model.SimulateInterval(p, state, row.LMP, model.Dispatch{PowerMW: desiredPower}, row.DurationHours())
+	if err != nil {
+		return 0, model.IntervalResult{}, err
 	}
-	nStates := socSteps + 1
+	target := sort.SearchFloat64s(grid, reachable.SOC)
+	if reachable.SOC > state.SOC && (target == len(grid) || grid[target] > reachable.SOC) {
+		target--
+	}
+	if target == source {
+		_, result, err := model.SimulateInterval(p, state, row.LMP, model.Dispatch{}, row.DurationHours())
+		return source, result, err
+	}
+	deltaMWh := (grid[target] - state.SOC) * p.EnergyCapacityMWh
+	power := -deltaMWh * p.DischargeEfficiency / row.DurationHours()
+	if deltaMWh > 0 {
+		power = -deltaMWh / p.ChargeEfficiency / row.DurationHours()
+	}
+	next, result, err := model.SimulateInterval(p, state, row.LMP, model.Dispatch{PowerMW: power}, row.DurationHours())
+	if err != nil {
+		return 0, model.IntervalResult{}, err
+	}
+	if math.Abs(next.SOC-grid[target]) > 1e-12 {
+		return 0, model.IntervalResult{}, fmt.Errorf("projected transition did not reach its grid state")
+	}
+	return target, result, nil
+}
 
-	socToIdx := func(soc float64) int {
-		if soc <= p.MinSOC {
-			return 0
-		}
-		if soc >= p.MaxSOC {
-			return socSteps
-		}
-		f := (soc - p.MinSOC) / (p.MaxSOC - p.MinSOC)
-		return int(math.Round(f * float64(socSteps)))
-	}
-	idxToSoc := func(idx int) float64 {
-		if idx <= 0 {
-			return p.MinSOC
-		}
-		if idx >= socSteps {
-			return p.MaxSOC
-		}
-		f := float64(idx) / float64(socSteps)
-		return p.MinSOC + f*(p.MaxSOC-p.MinSOC)
-	}
-
-	negInf := -1e100
-	dp := make([]float64, nStates)
-	next := make([]float64, nStates)
+func optimizeDP(ctx context.Context, rows []model.LMPInterval, p model.BatteryParams, initial float64, cfg config.OracleConfig) ([]model.Dispatch, error) {
+	grid, initialIndex := socGrid(p, initial, cfg.SOCSteps)
+	n := len(grid)
+	dp, next := make([]float64, n), make([]float64, n)
 	for i := range dp {
-		dp[i] = negInf
+		dp[i] = math.Inf(-1)
 	}
-	initIdx := socToIdx(initialSOC)
-	dp[initIdx] = 0
-
-	// Backpointers: for each interval t and each state reached after t,
-	// the predecessor state and realized power on the best path into it.
-	prevState := make([][]int, len(intervals))
-	prevPower := make([][]float64, len(intervals))
-	for t := range intervals {
-		prevState[t] = make([]int, nStates)
-		prevPower[t] = make([]float64, nStates)
-		for s := 0; s < nStates; s++ {
-			prevState[t][s] = -1
+	dp[initialIndex] = 0
+	previous := make([]uint16, len(rows)*n)
+	powers := make([]float64, len(rows)*n)
+	var candidates uint64
+	for t, row := range rows {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-	}
-
-	// Action set: [-Pmax .. +Pmax] in steps (includes idle at k=0).
-	pmax := p.PowerCapacityMW
-	step := pmax / float64(powerSteps)
-	actions := make([]float64, 0, 2*powerSteps+1)
-	for k := -powerSteps; k <= powerSteps; k++ {
-		actions = append(actions, float64(k)*step)
-	}
-
-	for t, it := range intervals {
 		for i := range next {
-			next[i] = negInf
+			next[i] = math.Inf(-1)
 		}
-		dtH := it.DurationHours()
-		if dtH <= 0 {
-			return nil, fmt.Errorf("non-positive dt at t=%d", t)
-		}
-
-		for sIdx := 0; sIdx < nStates; sIdx++ {
-			if dp[sIdx] <= negInf/2 {
+		for source, value := range dp {
+			if math.IsInf(value, -1) {
 				continue
 			}
-			soc := idxToSoc(sIdx)
-
-			for _, desiredPower := range actions {
-				nsoc, realizedPower, pnl := simulateInterval(soc, desiredPower, it.LMP, dtH, p)
-				ns := socToIdx(nsoc)
-				v := dp[sIdx] + pnl
-				if v > next[ns] {
-					next[ns] = v
-					prevState[t][ns] = sIdx
-					prevPower[t][ns] = realizedPower
+			lastTarget := -1
+			for k := -cfg.PowerSteps; k <= cfg.PowerSteps; k++ {
+				candidates++
+				if candidates%1024 == 0 {
+					if err := ctx.Err(); err != nil {
+						return nil, err
+					}
+				}
+				target, result, err := projectTransition(grid, source, float64(k)/float64(cfg.PowerSteps)*p.PowerCapacityMW, row, p)
+				if err != nil {
+					return nil, fmt.Errorf("oracle interval %d: %w", t, err)
+				}
+				if target == lastTarget {
+					continue
+				}
+				lastTarget = target
+				candidate := value + result.PNL
+				if math.IsNaN(candidate) || math.IsInf(candidate, 1) {
+					return nil, fmt.Errorf("oracle value exceeds finite numeric range")
+				}
+				index := t*n + target
+				if candidate > next[target] || candidate == next[target] && (math.Abs(result.PowerMW) < math.Abs(powers[index]) || math.Abs(result.PowerMW) == math.Abs(powers[index]) && source < int(previous[index])) {
+					next[target] = candidate
+					previous[index] = uint16(source)
+					powers[index] = result.PowerMW
 				}
 			}
 		}
-
-		// Swap dp and next for next iteration
 		dp, next = next, dp
 	}
-
-	// Pick best final state.
-	bestVal := negInf
-	bestState := 0
-	for i, v := range dp {
-		if v > bestVal {
-			bestVal = v
-			bestState = i
+	best := 0
+	for i := 1; i < n; i++ {
+		if dp[i] > dp[best] || dp[i] == dp[best] && math.Abs(powers[(len(rows)-1)*n+i]) < math.Abs(powers[(len(rows)-1)*n+best]) {
+			best = i
 		}
 	}
-
-	// Reconstruct the optimal plan by walking backpointers from the best final state.
-	plan := make([]model.Dispatch, len(intervals))
-	state := bestState
-	for t := len(intervals) - 1; t >= 0; t-- {
-		ps := prevState[t][state]
-		if ps < 0 {
-			return nil, fmt.Errorf("oracle reconstruction failed at t=%d", t)
-		}
-		plan[t] = model.Dispatch{PowerMW: prevPower[t][state]}
-		state = ps
+	plan := make([]model.Dispatch, len(rows))
+	for t := len(rows) - 1; t >= 0; t-- {
+		plan[t] = model.Dispatch{PowerMW: powers[t*n+best]}
+		best = int(previous[t*n+best])
 	}
-
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return plan, nil
-}
-
-// simulateInterval is a pure version of the battery interval physics+PnL.
-// It mirrors model.Battery.ApplyDispatch semantics: desired power is clipped by power limit and SOC bounds.
-func simulateInterval(soc float64, desiredPower float64, lmp float64, dtH float64, p model.BatteryParams) (nextSOC float64, realizedPower float64, pnl float64) {
-	// Clip by power.
-	power := desiredPower
-	if power > p.PowerCapacityMW {
-		power = p.PowerCapacityMW
-	}
-	if power < -p.PowerCapacityMW {
-		power = -p.PowerCapacityMW
-	}
-
-	energyFromGrid := 0.0
-	energyToGrid := 0.0
-
-	if power < 0 {
-		reqFromGrid := math.Abs(power) * dtH
-		// SOC constraint (max charge).
-		storableMWh := (p.MaxSOC - soc) * p.EnergyCapacityMWh
-		if storableMWh < 0 {
-			storableMWh = 0
-		}
-		limitBySOC := storableMWh / p.ChargeEfficiency
-		limitByPower := p.PowerCapacityMW * dtH
-		maxFromGrid := math.Min(limitBySOC, limitByPower)
-		if reqFromGrid > maxFromGrid && dtH > 0 {
-			reqFromGrid = maxFromGrid
-			power = -reqFromGrid / dtH
-		}
-		storedMWh := reqFromGrid * p.ChargeEfficiency
-		nextSOC = soc + storedMWh/p.EnergyCapacityMWh
-		energyFromGrid = reqFromGrid
-	} else if power > 0 {
-		reqToGrid := power * dtH
-		withdrawableMWh := (soc - p.MinSOC) * p.EnergyCapacityMWh
-		if withdrawableMWh < 0 {
-			withdrawableMWh = 0
-		}
-		limitBySOC := withdrawableMWh * p.DischargeEfficiency
-		limitByPower := p.PowerCapacityMW * dtH
-		maxToGrid := math.Min(limitBySOC, limitByPower)
-		if reqToGrid > maxToGrid && dtH > 0 {
-			reqToGrid = maxToGrid
-			power = reqToGrid / dtH
-		}
-		withdrawnMWh := reqToGrid / p.DischargeEfficiency
-		nextSOC = soc - withdrawnMWh/p.EnergyCapacityMWh
-		energyToGrid = reqToGrid
-	} else {
-		nextSOC = soc
-	}
-
-	// Clamp numeric drift.
-	if nextSOC < p.MinSOC {
-		nextSOC = p.MinSOC
-	}
-	if nextSOC > p.MaxSOC {
-		nextSOC = p.MaxSOC
-	}
-
-	// PnL uses grid-side energies + degradation.
-	revenue := lmp * energyToGrid
-	cost := lmp * energyFromGrid
-	deg := p.DegradationCostPerMWh * (energyFromGrid + energyToGrid)
-	pnl = revenue - cost - deg
-	return nextSOC, power, pnl
 }
