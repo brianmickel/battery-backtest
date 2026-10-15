@@ -5,6 +5,10 @@ import (
 	"math"
 )
 
+// ErrUnrepresentableEnergy identifies a transfer that cannot conserve stored energy
+// within the model's numerical tolerance.
+var ErrUnrepresentableEnergy = errors.New("battery interval cannot represent conserved energy within numeric tolerance")
+
 // BatteryParams defines the physical and economic parameters of the battery.
 // Units:
 // - EnergyCapacityMWh: MWh
@@ -156,7 +160,7 @@ func SimulateInterval(params BatteryParams, state BatteryState, lmp float64, dis
 	actualStoredDelta := (next.SOC - state.SOC) * params.EnergyCapacityMWh
 	tolerance := math.Max(1e-9, 1e-9*math.Max(math.Abs(actualStoredDelta), math.Abs(storedDelta)))
 	if math.Abs(actualStoredDelta-storedDelta) > tolerance {
-		return state, IntervalResult{}, errors.New("battery interval cannot represent conserved energy within numeric tolerance")
+		return state, IntervalResult{}, ErrUnrepresentableEnergy
 	}
 	return next, result, nil
 }
