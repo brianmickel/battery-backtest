@@ -1,21 +1,8 @@
 import axios from 'axios';
+import { isObject } from '../domain/validation';
+import { isBacktestResponse, isBatteryInfo, isCompareResponse, isDatasetInfo, isLocationInfo, isRanking, isStrategyInfo } from './responses';
 
-// In development, use relative URLs to leverage Vite proxy
-// In production, if VITE_API_URL is set, use it; otherwise use relative URLs
-// (since frontend is served from the same server as the API)
-const API_BASE_URL = import.meta.env.VITE_API_URL || '';
-
-const api = axios.create({
-  baseURL: API_BASE_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-});
-
-// Log API configuration for debugging
-console.log('API Base URL:', API_BASE_URL || '(relative - same origin)');
-console.log('Environment:', import.meta.env.MODE);
-console.log('Production:', import.meta.env.PROD);
+const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || '' });
 
 export type { DataSourceConfig, BatteryConfig, StrategyConfig, StrategyParamValue, BacktestConfig, BacktestOptions, BacktestRequest, CompareBacktestRequest } from '../domain/types';
 import type { BacktestRequest, CompareBacktestRequest, StrategyParamValue } from '../domain/types';
@@ -62,7 +49,7 @@ export interface LedgerRow {
   location: string;
   market: string;
   lmp: number;
-  action: string;
+  action: 'CHARGING' | 'DISCHARGING' | 'IDLE';
   requested_power_mw: number;
   power_mw: number;
   energy_from_grid_mwh: number;
@@ -75,7 +62,7 @@ export interface LedgerRow {
 }
 
 export interface BacktestResponse {
-  status: string;
+  status: 'completed';
   summary: BacktestSummary;
   ledger?: LedgerRow[];
 }
@@ -134,78 +121,74 @@ export interface CompareBacktestResponse {
   comparison: ComparisonResult[];
 }
 
-interface ApiErrorBody {
-  error?: { message?: string };
+
+export type ErrorCode = 'INVALID_REQUEST' | 'BODY_TOO_LARGE' | 'WORK_BUDGET_EXCEEDED' | 'UPSTREAM_AUTH' | 'UPSTREAM_RATE_LIMIT' | 'UPSTREAM_UNAVAILABLE' | 'SERVER_BUSY' | 'DEADLINE_EXCEEDED' | 'INTERNAL_ERROR' | 'NOT_FOUND';
+const errorCodes: readonly string[] = ['INVALID_REQUEST', 'BODY_TOO_LARGE', 'WORK_BUDGET_EXCEEDED', 'UPSTREAM_AUTH', 'UPSTREAM_RATE_LIMIT', 'UPSTREAM_UNAVAILABLE', 'SERVER_BUSY', 'DEADLINE_EXCEEDED', 'INTERNAL_ERROR', 'NOT_FOUND'];
+
+export class ApiError extends Error {
+  readonly code: string;
+  readonly field?: string;
+  readonly variation?: string;
+  readonly location_id?: string;
+  constructor(message: string, details: { code: string; field?: string; variation?: string; location_id?: string }) {
+    super(message);
+    this.name = 'ApiError';
+    this.code = details.code;
+    this.field = details.field;
+    this.variation = details.variation;
+    this.location_id = details.location_id;
+  }
 }
 
-// Extract a user-facing message from an API (axios) error or a plain Error.
-export function getErrorMessage(err: unknown, fallback: string): string {
-  if (axios.isAxiosError<ApiErrorBody>(err)) {
-    return err.response?.data?.error?.message || err.message || fallback;
+function safeError(error: unknown): ApiError {
+  if (error instanceof ApiError) return error;
+  if (axios.isAxiosError<unknown>(error) && isObject(error.response?.data)) {
+    const body = error.response.data.error;
+    if (isObject(body) && typeof body.code === 'string' && errorCodes.includes(body.code) && typeof body.message === 'string' && body.message.length > 0 && ['field', 'variation', 'location_id'].every(key => body[key] === undefined || typeof body[key] === 'string')) {
+      return new ApiError(body.message, { code: body.code, ...(typeof body.field === 'string' ? { field: body.field } : {}), ...(typeof body.variation === 'string' ? { variation: body.variation } : {}), ...(typeof body.location_id === 'string' ? { location_id: body.location_id } : {}) });
+    }
   }
-  if (err instanceof Error) {
-    return err.message || fallback;
-  }
-  return fallback;
+  return new ApiError('The request could not be completed. Please try again.', { code: 'INTERNAL_ERROR' });
 }
 
-// API functions
+export function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof ApiError ? error.message : fallback;
+}
+
+async function checked<T>(operation: () => Promise<{ data: unknown }>, accepts: (value: unknown) => value is T): Promise<T> {
+  try {
+    const { data } = await operation();
+    if (!accepts(data)) throw new ApiError('The server returned an invalid response.', { code: 'INTERNAL_ERROR' });
+    return data;
+  } catch (error) { throw safeError(error); }
+}
+
+function list<T>(key: string, accepts: (value: unknown) => value is T, params?: Record<string, string>): Promise<T[]> {
+  return checked(async () => {
+    const { data } = await api.get<unknown>(`/api/v1/${key}`, { params });
+    return { data: isObject(data) ? data[key] : undefined };
+  }, (value): value is T[] => Array.isArray(value) && value.every(accepts));
+}
+
+function credential(apiKey: string): { 'X-GridStatus-API-Key': string } {
+  if (!apiKey.trim()) throw new ApiError('Enter your GridStatus API key.', { code: 'INVALID_REQUEST', field: 'api_key' });
+  return { 'X-GridStatus-API-Key': apiKey };
+}
+
+export interface RankRequest { dataset_id: string; start_date: string; end_date: string; location_ids: string; limit?: number }
+
 export const apiService = {
-  async runBacktest(request: BacktestRequest): Promise<BacktestResponse> {
-    const response = await api.post<BacktestResponse>('/api/v1/backtest', request);
-    return response.data;
+  runBacktest(request: BacktestRequest, apiKey: string, signal?: AbortSignal): Promise<BacktestResponse> {
+    return checked(() => api.post<unknown>('/api/v1/backtest', request, { headers: credential(apiKey), signal }), isBacktestResponse);
   },
-
-  async compareBacktests(request: CompareBacktestRequest): Promise<CompareBacktestResponse> {
-    const response = await api.post<CompareBacktestResponse>('/api/v1/backtest/compare', request);
-    return response.data;
+  compareBacktests(request: CompareBacktestRequest, apiKey: string, signal?: AbortSignal): Promise<CompareBacktestResponse> {
+    return checked(() => api.post<unknown>('/api/v1/backtest/compare', request, { headers: credential(apiKey), signal }), isCompareResponse);
   },
-
-  async getBatteries(): Promise<BatteryInfo[]> {
-    try {
-      const response = await api.get<{ batteries: BatteryInfo[] }>('/api/v1/batteries');
-      console.log('Batteries API response:', response.data);
-      return response.data.batteries || [];
-    } catch (error) {
-      console.error('Error fetching batteries:', error);
-      console.error('Response:', axios.isAxiosError(error) ? error.response?.data : undefined);
-      throw error;
-    }
-  },
-
-  async getStrategies(): Promise<StrategyInfo[]> {
-    try {
-      const response = await api.get<{ strategies: StrategyInfo[] }>('/api/v1/strategies');
-      console.log('Strategies API response:', response.data);
-      return response.data.strategies || [];
-    } catch (error) {
-      console.error('Error fetching strategies:', error);
-      console.error('Response:', axios.isAxiosError(error) ? error.response?.data : undefined);
-      throw error;
-    }
-  },
-
-  async getDatasets(): Promise<DatasetInfo[]> {
-    const response = await api.get<{ datasets: DatasetInfo[] }>('/api/v1/datasets');
-    return response.data.datasets;
-  },
-
-  async getLocations(datasetId: string): Promise<LocationInfo[]> {
-    const response = await api.get<{ locations: LocationInfo[] }>('/api/v1/locations', {
-      params: { dataset_id: datasetId },
-    });
-    return response.data.locations;
-  },
-
-  async rankNodes(params: {
-    api_key: string;
-    dataset_id: string;
-    start_date: string;
-    end_date: string;
-    location_ids?: string;
-    limit?: number;
-  }): Promise<Ranking[]> {
-    const response = await api.get<{ rankings: Ranking[] }>('/api/v1/rank', { params });
-    return response.data.rankings;
+  getBatteries(): Promise<BatteryInfo[]> { return list('batteries', isBatteryInfo); },
+  getStrategies(): Promise<StrategyInfo[]> { return list('strategies', isStrategyInfo); },
+  getDatasets(): Promise<DatasetInfo[]> { return list('datasets', isDatasetInfo); },
+  getLocations(datasetId: string): Promise<LocationInfo[]> { return list('locations', isLocationInfo, { dataset_id: datasetId }); },
+  rankNodes(params: RankRequest, apiKey: string, signal?: AbortSignal): Promise<Ranking[]> {
+    return checked(() => api.get<unknown>('/api/v1/rank', { params, headers: credential(apiKey), signal }), (value): value is { rankings: Ranking[] } => isObject(value) && Array.isArray(value.rankings) && value.rankings.every(isRanking)).then(value => value.rankings);
   },
 };
