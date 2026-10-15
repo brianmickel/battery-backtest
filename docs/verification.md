@@ -54,3 +54,12 @@ Synthetic tests prove application behavior under controlled provider responses. 
 Docker smoke checks an actual built image and local runtime. It makes only health, static, metadata, and locally rejected API requests, so it does not spend provider quota. Browser resource timings are observations from a local run, not an internet latency benchmark. Optimizer benchmarks and a quiet maximum-accepted-payload peak-memory measurement belong in the release evidence; the 64 MiB optimizer estimate is not a total-process RSS guarantee.
 
 The integrated production build measured 770.27 kB JavaScript (228.67 kB gzip) and 3.19 kB CSS (1.21 kB gzip). The browser fetched one JavaScript bundle, one stylesheet, metadata, and the backtest response; it contacted no third-party origin. Vite reports a bundle-size warning. These local observations do not establish that a particular split would improve user latency, so code splitting remains deferred pending a measured loading scenario.
+
+Quiet precompiled probes on an Apple M4 Max (macOS, Go 1.27.2, October 14, 2026) each sent a 1 MiB HTTP request and a 64 MiB provider response containing 17,280 five-minute intervals:
+
+| Scenario | HTTP | Response bytes | Process wall time | Maximum resident memory |
+|---|---|---:|---:|---:|
+| One oracle, resolution 200/10, full ledger | 200 | 9,111,831 | 11.30 s | 403.55 MiB |
+| Six schedule comparisons, retained outcomes | 200 | 83,260 | 0.18 s | 310.12 MiB |
+
+These single-iteration measurements include the real server, local provider fixture, and test client in one process. They are not isolated server RSS, a total-memory cap, or a universal latency guarantee. Seven comparisons of the same full-length fixture return 422 under the retained-output budget. The quiet oracle benchmark medians were 0.181 seconds for one day and 5.472 seconds for 30 days; the shared one-day experiment runner median was 0.179 seconds. Reproduce payload probes with `BenchmarkMaximumAcceptedHTTPPayload` in `internal/integration/payload_test.go`, running each sub-benchmark separately with `-benchtime=1x` under an OS memory profiler.
