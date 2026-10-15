@@ -19,7 +19,7 @@ func LoadGridStatusJSON(path string) (*model.GridStatusLMPResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	return decodeGridStatusResponse(file)
 }
 
