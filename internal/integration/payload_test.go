@@ -23,7 +23,7 @@ import (
 // Run each sub-benchmark alone with -benchtime=1x in a precompiled test binary
 // under the OS memory profiler. These are payload probes, not latency promises.
 func BenchmarkMaximumAcceptedHTTPPayload(b *testing.B) {
-	for _, scenario := range []string{"single_oracle", "comparison_7_schedule"} {
+	for _, scenario := range []string{"single_oracle", "comparison_6_schedule"} {
 		b.Run(scenario, func(b *testing.B) {
 			rows := make([]model.LMPInterval, strategy.MaxIntervals)
 			start := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -84,7 +84,7 @@ func BenchmarkMaximumAcceptedHTTPPayload(b *testing.B) {
 			} else {
 				endpoint += "/compare"
 				request["base_config"] = map[string]any{"battery": battery, "strategy": map[string]any{"name": "schedule"}}
-				variations := make([]map[string]any, 7)
+				variations := make([]map[string]any, 6)
 				for i := range variations {
 					variations[i] = map[string]any{"name": fmt.Sprintf("schedule-%d", i), "config": map[string]any{}}
 				}
@@ -123,7 +123,7 @@ func BenchmarkMaximumAcceptedHTTPPayload(b *testing.B) {
 					}
 				} else {
 					var result models.CompareBacktestResponse
-					if err := json.Unmarshal(raw, &result); err != nil || len(result.Comparison) != 7 {
+					if err := json.Unmarshal(raw, &result); err != nil || len(result.Comparison) != 6 {
 						b.Fatalf("invalid comparison: %v", err)
 					}
 					for _, result := range result.Comparison {
