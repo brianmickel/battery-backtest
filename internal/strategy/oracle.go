@@ -14,26 +14,6 @@ import (
 // horizon. The feasible grid restricts profit; it is not an economic upper bound.
 type OracleStrategy struct{ plan []model.Dispatch }
 
-type OracleParams struct{ SocSteps, PowerSteps int }
-
-func NewOracleStrategy(intervals []model.LMPInterval, params model.BatteryParams, initialSOC float64, cfg OracleParams) (*OracleStrategy, error) {
-	if cfg.SocSteps <= 0 {
-		cfg.SocSteps = 200
-	}
-	if cfg.PowerSteps <= 0 {
-		cfg.PowerSteps = 10
-	}
-	battery, err := model.NewBattery(params, initialSOC)
-	if err != nil {
-		return nil, err
-	}
-	built, err := Build(context.Background(), config.OracleConfig{SOCSteps: cfg.SocSteps, PowerSteps: cfg.PowerSteps}, intervals, battery)
-	if err != nil {
-		return nil, err
-	}
-	return built.(*OracleStrategy), nil
-}
-
 func (s *OracleStrategy) Name() string { return "oracle" }
 func (s *OracleStrategy) Decide(ctx Context) model.Dispatch {
 	if ctx.Index < 0 || ctx.Index >= len(s.plan) {
