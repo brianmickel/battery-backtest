@@ -28,7 +28,11 @@ func TestProviderResponseModes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer response.Body.Close()
+			defer func() {
+				if err := response.Body.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
 			body, err := io.ReadAll(response.Body)
 			if err != nil || response.StatusCode != tc.status || string(body) != tc.body || response.Header.Get("Retry-After") != tc.retry || provider.Calls() != 1 {
 				t.Fatalf("response = %d %q, retry %q, calls %d, err %v", response.StatusCode, body, response.Header.Get("Retry-After"), provider.Calls(), err)
@@ -56,7 +60,7 @@ func TestProviderCancellationAndDeadline(t *testing.T) {
 			go func() {
 				response, err := provider.Server.Client().Do(request)
 				if response != nil {
-					response.Body.Close()
+					err = errors.Join(err, response.Body.Close())
 				}
 				result <- err
 			}()
