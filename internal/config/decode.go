@@ -140,8 +140,18 @@ func validateNode(node *yaml.Node, typ reflect.Type, path string) error {
 			return invalid(path, "must be a string")
 		}
 	case reflect.Int:
-		if node.Kind != yaml.ScalarNode || node.Tag != "!!int" {
+		if node.Kind != yaml.ScalarNode || (node.Tag != "!!int" && node.Tag != "!!float") {
 			return invalid(path, "must be an integer")
+		}
+		if node.Tag == "!!float" {
+			var numeric float64
+			if err := node.Decode(&numeric); err != nil || math.IsNaN(numeric) || math.IsInf(numeric, 0) || math.Trunc(numeric) != numeric {
+				return invalid(path, "must be a finite integer")
+			}
+			limit := math.Ldexp(1, typ.Bits()-1)
+			if numeric < -limit || numeric >= limit {
+				return invalid(path, "integer is out of range")
+			}
 		}
 		var value int
 		if err := node.Decode(&value); err != nil {

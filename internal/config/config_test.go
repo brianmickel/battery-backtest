@@ -190,6 +190,26 @@ func TestMergeEveryBatteryFieldWithoutAliasing(t *testing.T) {
 	}
 }
 
+func TestIntegerParametersUseNumericSemantics(t *testing.T) {
+	for _, decode := range []func([]byte, any) error{json.Unmarshal, yaml.Unmarshal} {
+		for _, numeric := range []string{"200", "200.0", "2e2"} {
+			var input Input
+			raw := fmt.Sprintf(`{"strategy":{"name":"oracle","params":{"soc_steps":%s}}}`, numeric)
+			if err := decode([]byte(raw), &input); err != nil {
+				t.Fatalf("%s: %v", numeric, err)
+			}
+			if input.Strategy.Params.SOCSteps == nil || *input.Strategy.Params.SOCSteps != 200 {
+				t.Fatalf("numeric value changed: %+v", input.Strategy.Params)
+			}
+		}
+		for _, numeric := range []string{"200.5", `"200"`, "9.223372036854776e18", "1e100"} {
+			var input Input
+			raw := fmt.Sprintf(`{"strategy":{"params":{"soc_steps":%s}}}`, numeric)
+			requireField(t, decode([]byte(raw), &input), "strategy.params.soc_steps")
+		}
+	}
+}
+
 func TestStrategyParameterInheritanceAndChange(t *testing.T) {
 	base := fullInput()
 	base.Strategy.Params = StrategyParamsOverride{ChargeStart: ptr("09:00"), ChargePowerMW: ptr(5.0)}
