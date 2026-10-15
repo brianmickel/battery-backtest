@@ -91,7 +91,7 @@ func (c *GridStatusClient) Fetch(ctx context.Context, apiKey string, query Query
 	if err != nil {
 		return nil, providerFailure(ctx, "provider request failed", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		failure := &GridStatusError{StatusCode: resp.StatusCode, Code: "UPSTREAM_UNAVAILABLE", Message: "provider returned an unsuccessful status"}
 		switch resp.StatusCode {
