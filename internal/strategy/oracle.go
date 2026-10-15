@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -100,6 +101,9 @@ func optimizeDP(ctx context.Context, rows []model.LMPInterval, p model.BatteryPa
 					}
 				}
 				target, result, err := projectTransition(grid, source, float64(k)/float64(cfg.PowerSteps)*p.PowerCapacityMW, row, p)
+				if errors.Is(err, model.ErrUnrepresentableEnergy) {
+					continue
+				}
 				if err != nil {
 					return nil, fmt.Errorf("oracle interval %d: %w", t, err)
 				}
