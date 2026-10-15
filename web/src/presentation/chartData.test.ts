@@ -151,6 +151,27 @@ describe('average directional power buckets', () => {
     expect(bucket.timestampSource).toBe('market-projected');
   });
 
+  it('uses the next interval start at a shared instant without changing earlier offset brackets', () => {
+    const rows = [
+      { ...halfHour[0],
+        interval_start_utc: '2024-11-03T08:00:00Z', interval_end_utc: '2024-11-03T09:00:00Z',
+        interval_start_local: '2024-11-03T01:00:00-07:00', interval_end_local: '2024-11-03T02:00:00-07:00',
+        energy_from_grid_mwh: 2,
+      },
+      { ...halfHour[0],
+        interval_start_utc: '2024-11-03T09:00:00Z', interval_end_utc: '2024-11-03T09:30:00Z',
+        interval_start_local: '2024-11-03T01:00:00-08:00', interval_end_local: '2024-11-03T01:30:00-08:00',
+        energy_from_grid_mwh: 1,
+      },
+    ];
+    const buckets = powerBuckets(rows.reverse(), 'market');
+    expect(buckets.map(bucket => formatTimestamp(bucket.timestamp, 'market'))).toEqual([
+      '2024-11-03 01:00:00 UTC-07:00', '2024-11-03 01:30:00 UTC-07:00', '2024-11-03 01:00:00 UTC-08:00',
+    ]);
+    expect(buckets.map(bucket => bucket.timestampSource)).toEqual(['market-observed', 'market-projected', 'market-observed']);
+    expect(buckets.map(bucket => bucket.chargeMWh)).toEqual([1, 1, 1]);
+  });
+
   it('returns no points for an empty ledger', () => {
     expect(powerBuckets([], 'UTC')).toEqual([]);
     expect(pnlPoints([], 'market')).toEqual([]);

@@ -61,6 +61,8 @@ export function powerBuckets(ledger: readonly LedgerRow[], clock: Clock): PowerB
   return [...buckets.values()].sort((a, b) => a.startMs - b.startMs).map((bucket): PowerBucket => {
     if (clock === 'UTC') return { ...bucket, timestamp: new Date(bucket.startMs).toISOString(), timestampSource: 'utc' };
     while (nextObservation < observations.length - 1 && observations[nextObservation].instantMs < bucket.startMs) nextObservation++;
+    // At a shared endpoint the new interval's start determines the bucket label.
+    while (nextObservation < observations.length - 1 && observations[nextObservation + 1].instantMs === bucket.startMs) nextObservation++;
     const next = observations[nextObservation];
     if (next.instantMs === bucket.startMs) return { ...bucket, timestamp: next.timestamp, timestampSource: 'market-observed' };
     // The rounded first bucket uses the first observation's offset; later buckets use both neighbors.
