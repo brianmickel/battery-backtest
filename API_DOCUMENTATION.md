@@ -34,6 +34,8 @@ There is no stored-run ID or ledger-download route. Request `include_ledger` in 
 
 `config` accepts `battery_file` (an advertised preset ID), a `battery` override object, and `strategy`. Without a preset, capacity, power, efficiencies, and min/max SOC are required. Name defaults to empty, degradation cost to zero, and initial SOC to the resolved minimum. Explicit zero values remain explicit. All values must be finite; all fields reject `null`. Filesystem paths and unknown preset IDs are invalid.
 
+JSON field names are exact and duplicate members are rejected. `options.limit_intervals` selects a chronological prefix after validating the complete series; omission or zero means all. Negative limits and values above 17,280 are invalid. `options.include_ledger` defaults to false.
+
 | Strategy | Parameters and defaults |
 |---|---|
 | `oracle` | `soc_steps: 200` (2–1,000); `power_steps: 10` (1–50) |
