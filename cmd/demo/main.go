@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"battery-backtest/internal/backtest"
@@ -30,12 +31,7 @@ func main() {
 func run(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("demo", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	fs.Usage = func() {
-		fmt.Fprintln(stdout, "usage: demo --data sample_data.json --config examples/config.yaml [options]")
-		fs.SetOutput(stdout)
-		fs.PrintDefaults()
-		fs.SetOutput(io.Discard)
-	}
+	fs.Usage = func() {}
 	dataPath := fs.String("data", "sample_data.json", "Path to Grid Status JSON response")
 	configPath := fs.String("config", "", "Required YAML configuration path")
 	count := fs.Int("n", 12, "Chronological interval limit (0=all)")
@@ -43,7 +39,11 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	clock := fs.String("timezone", "market", "Schedule/display clock: market or UTC")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			return nil
+			var defaults strings.Builder
+			fs.SetOutput(&defaults)
+			fs.PrintDefaults()
+			_, err := fmt.Fprintf(stdout, "usage: demo --data sample_data.json --config examples/config.yaml [options]\n%s", defaults.String())
+			return err
 		}
 		return err
 	}
