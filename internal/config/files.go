@@ -35,7 +35,9 @@ func validPresetID(id string) bool {
 		return false
 	}
 	for _, ch := range id {
-		if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '_' || ch == '-') {
+		switch {
+		case ch >= 'a' && ch <= 'z', ch >= 'A' && ch <= 'Z', ch >= '0' && ch <= '9', ch == '_', ch == '-':
+		default:
 			return false
 		}
 	}
