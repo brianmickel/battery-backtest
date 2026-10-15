@@ -59,7 +59,7 @@ func refreshCatalog(ctx context.Context, provider locationProvider, apiKey strin
 			if err == nil {
 				err = errors.New("provider returned no intervals")
 			}
-			fmt.Fprintf(progress, "location %q failed: %v\n", location.ID, err)
+			_, _ = fmt.Fprintf(progress, "location %q failed: %v\n", location.ID, err)
 			continue
 		}
 		first := rows[0]

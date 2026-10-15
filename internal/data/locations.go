@@ -99,7 +99,7 @@ func writeLocationsAtomically(path string, raw []byte, create func(string, strin
 	if err != nil {
 		return fmt.Errorf("create temporary locations file: %w", err)
 	}
-	defer os.Remove(file.Name())
+	defer func() { _ = os.Remove(file.Name()) }()
 	defer file.Close()
 	if count, err := file.Write(raw); err != nil {
 		return fmt.Errorf("write temporary locations file: %w", err)

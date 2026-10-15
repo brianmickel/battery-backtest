@@ -41,20 +41,21 @@ func run(ctx context.Context, args []string, apiKey string, provider locationPro
 		return 2
 	}
 	if flags.NArg() != 0 || strings.TrimSpace(options.dataset) == "" || options.days < 1 || options.days > 60 {
-		fmt.Fprintln(stderr, "dataset-id is required, days must be 1-60, and positional arguments are not supported")
+		_, _ = fmt.Fprintln(stderr, "dataset-id is required, days must be 1-60, and positional arguments are not supported")
 		return 2
 	}
 	if strings.TrimSpace(apiKey) == "" {
-		fmt.Fprintln(stderr, "GRIDSTATUS_API_KEY environment variable is required")
+		_, _ = fmt.Fprintln(stderr, "GRIDSTATUS_API_KEY environment variable is required")
 		return 2
 	}
 	if options.output == "" {
 		options.output = data.GetDefaultLocationsPath()
 	}
 	result, err := refreshCatalog(ctx, provider, apiKey, options, time.Now().UTC(), stderr)
-	fmt.Fprintf(stdout, "%s: updated %d/%d locations; %d failed\n", result.status, result.updated, result.total, result.failed)
+	_, outputErr := fmt.Fprintf(stdout, "%s: updated %d/%d locations; %d failed\n", result.status, result.updated, result.total, result.failed)
+	err = errors.Join(err, outputErr)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		_, _ = fmt.Fprintln(stderr, err)
 		return 1
 	}
 	return 0

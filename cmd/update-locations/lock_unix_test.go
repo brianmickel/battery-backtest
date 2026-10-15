@@ -80,7 +80,7 @@ func TestUpdaterReservedNamesCannotReplaceHeldLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer held.Close()
+	defer func() { _ = held.Close() }()
 	before, _ := os.Stat(path + ".lock")
 	if before.Mode().Perm() != 0600 {
 		t.Errorf("lock mode=%o", before.Mode().Perm())
@@ -105,7 +105,7 @@ func TestUpdaterReservedNamesCannotReplaceHeldLock(t *testing.T) {
 	}
 	_, another, err := lockDestination(path)
 	if another != nil {
-		another.Close()
+		_ = another.Close()
 	}
 	if !errors.Is(err, errDestinationBusy) {
 		t.Fatalf("original catalog no longer excluded: %v", err)
@@ -122,7 +122,7 @@ func TestUpdaterRejectsFinalOutputSymlinkBeforeLock(t *testing.T) {
 	}
 	_, lock, err := lockDestination(path)
 	if lock != nil {
-		lock.Close()
+		_ = lock.Close()
 	}
 	if err == nil {
 		t.Fatal("output symlink accepted")
@@ -208,7 +208,7 @@ func startUpdaterProcess(t *testing.T, path, seed, mode string) *updaterProcess 
 	}()
 	go func() { p.err = p.cmd.Wait(); <-scanned; close(p.done) }()
 	t.Cleanup(func() {
-		p.stdin.Close()
+		_ = p.stdin.Close()
 		select {
 		case <-p.done:
 		default:
@@ -307,7 +307,7 @@ func TestUpdaterProcessesDifferentDestinationsProceed(t *testing.T) {
 	second.wait(t, true)
 	_, lock, err := lockDestination(firstPath)
 	if lock != nil {
-		lock.Close()
+		_ = lock.Close()
 	}
 	if !errors.Is(err, errDestinationBusy) {
 		t.Fatalf("first process lost its independent lock: %v", err)

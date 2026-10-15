@@ -54,6 +54,25 @@ func refreshNow() time.Time {
 	return time.Date(2024, 3, 1, 1, 0, 0, 0, time.FixedZone("west", -7*3600))
 }
 
+type failedOutput struct{}
+
+func (failedOutput) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+func TestUpdaterReportsOutputFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "catalog.json")
+	refreshFixture(t, path, data.Location{ID: "A"})
+	provider := fakeLocations(func(_ context.Context, _ string, query data.Query) ([]model.LMPInterval, error) {
+		return refreshRows(query), nil
+	})
+	var stderr bytes.Buffer
+	if code := run(context.Background(), []string{"--output", path}, "k", provider, failedOutput{}, &stderr); code != 1 {
+		t.Fatalf("output failure returned exit code %d", code)
+	}
+	if !strings.Contains(stderr.String(), io.ErrClosedPipe.Error()) {
+		t.Fatalf("output failure was not reported: %s", &stderr)
+	}
+}
+
 func TestUpdaterCustomOutputUsesDestinationAndContext(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "custom.json")
 	refreshFixture(t, path, data.Location{ID: "custom-only", Name: "Preserved name"})
@@ -258,7 +277,9 @@ func TestUpdaterCancellationAndOutputSymlinkAfterFetch(t *testing.T) {
 			if err != nil {
 				t.Fatalf("lock not released: %v", err)
 			}
-			lock.Close()
+			if err := lock.Close(); err != nil {
+				t.Fatal(err)
+			}
 		})
 	}
 }

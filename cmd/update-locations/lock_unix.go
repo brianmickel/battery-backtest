@@ -24,15 +24,15 @@ func openDestinationLock(path string) (*os.File, error) {
 	file := os.NewFile(uintptr(fd), path)
 	after, err := file.Stat()
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, fmt.Errorf("inspect opened lock: %w", err)
 	}
 	if !validLockFile(after) || (before != nil && !os.SameFile(before, after)) {
-		file.Close()
+		_ = file.Close()
 		return nil, errors.New("lock sidecar changed or is not a regular file with exactly one link")
 	}
 	if err := syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		file.Close()
+		_ = file.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
 			return nil, errDestinationBusy
 		}

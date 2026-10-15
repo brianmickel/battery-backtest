@@ -72,7 +72,11 @@ func TestLocationsLoadPreservesErrorsAndRejectsInvalidCatalogs(t *testing.T) {
 		if err := os.Chmod(path, 0000); err != nil {
 			t.Fatal(err)
 		}
-		defer os.Chmod(path, 0600)
+		defer func() {
+			if err := os.Chmod(path, 0600); err != nil {
+				t.Error(err)
+			}
+		}()
 		if _, err := LoadLocations(path); !errors.Is(err, os.ErrPermission) {
 			t.Fatalf("permission error = %v", err)
 		}
