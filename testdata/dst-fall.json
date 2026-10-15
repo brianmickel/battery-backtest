@@ -1,0 +1,25 @@
+{
+  "status_code": 200,
+  "data": [
+    {
+      "interval_start_utc": "2024-11-03T08:30:00Z",
+      "interval_end_utc": "2024-11-03T09:00:00Z",
+      "interval_start_local": "2024-11-03T01:30:00-07:00",
+      "interval_end_local": "2024-11-03T01:00:00-08:00",
+      "market": "SYNTHETIC",
+      "location": "TEST_NODE",
+      "location_type": "NODE",
+      "lmp": 10
+    },
+    {
+      "interval_start_utc": "2024-11-03T09:00:00Z",
+      "interval_end_utc": "2024-11-03T09:30:00Z",
+      "interval_start_local": "2024-11-03T01:00:00-08:00",
+      "interval_end_local": "2024-11-03T01:30:00-08:00",
+      "market": "SYNTHETIC",
+      "location": "TEST_NODE",
+      "location_type": "NODE",
+      "lmp": 80
+    }
+  ]
+}

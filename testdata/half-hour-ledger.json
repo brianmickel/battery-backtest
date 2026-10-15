@@ -1,0 +1,23 @@
+[
+  {
+    "index": 0,
+    "interval_start_utc": "2024-01-01T00:00:00Z",
+    "interval_end_utc": "2024-01-01T00:30:00Z",
+    "interval_start_local": "2024-01-01T00:00:00Z",
+    "interval_end_local": "2024-01-01T00:30:00Z",
+    "market": "SYNTHETIC",
+    "location": "TEST_NODE",
+    "location_type": "NODE",
+    "lmp": 20,
+    "action": "CHARGING",
+    "requested_power_mw": -100,
+    "power_mw": -100,
+    "energy_from_grid_mwh": 50,
+    "energy_to_grid_mwh": 0,
+    "throughput_mwh": 50,
+    "soc_start": 0,
+    "soc_end": 0.5,
+    "pnl": -1000,
+    "cum_pnl": -1000
+  }
+]
