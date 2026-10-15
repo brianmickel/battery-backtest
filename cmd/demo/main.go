@@ -1,194 +1,107 @@
 package main
 
 import (
-	"encoding/json"
+	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"os/signal"
+	"path/filepath"
+	"syscall"
 
 	"battery-backtest/internal/backtest"
 	"battery-backtest/internal/config"
-	"battery-backtest/internal/model"
-	"battery-backtest/internal/strategy"
+	"battery-backtest/internal/data"
+	"battery-backtest/internal/experiment"
 )
 
-// Demo:
-// - Load Grid Status JSON response from sample_data.json
-// - Instantiate a battery model
-// - Run a strategy for a few intervals to show how models fit together
 func main() {
-	dataPath := flag.String("data", "sample_data.json", "Path to Grid Status JSON (sample_data.json)")
-	cfgPath := flag.String("config", "", "Path to YAML config (optional)")
-	n := flag.Int("n", 12, "Number of intervals to simulate")
-	outCSV := flag.String("out", "", "Optional path to write ledger CSV (e.g. results/dispatch.csv)")
-	flag.Parse()
-
-	raw, err := os.ReadFile(*dataPath)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := run(ctx, os.Args[1:], os.Stdout)
+	stop()
 	if err != nil {
-		panic(err)
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
 	}
-
-	var resp model.GridStatusLMPResponse
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		panic(err)
-	}
-	if len(resp.Data) == 0 {
-		panic("no data in JSON")
-	}
-
-	// Defaults (can be overridden via --config).
-	params := model.BatteryParams{
-		EnergyCapacityMWh:     100,
-		PowerCapacityMW:       50,
-		ChargeEfficiency:      0.95,
-		DischargeEfficiency:   0.95,
-		MinSOC:                0.10,
-		MaxSOC:                0.90,
-		DegradationCostPerMWh: 2.0,
-	}
-	initialSOC := 0.50
-
-	// Strategy defaults.
-	var strat strategy.Strategy = &strategy.ScheduleStrategy{Params: strategy.ScheduleParams{
-		ChargeStart:      "10:00",
-		ChargeEnd:        "17:00",
-		DischargeStart:   "17:00",
-		DischargeEnd:     "20:00",
-		ChargePowerMW:    50.0,
-		DischargePowerMW: 50.0,
-	}}
-
-	if *cfgPath != "" {
-		cfg, err := config.Load(*cfgPath)
-		if err != nil {
-			panic(err)
-		}
-		params = cfg.Battery.ToModelParams()
-		initialSOC = cfg.Battery.InitialSOC
-
-		switch cfg.Strategy.Name {
-		case "schedule":
-			chargeStart := "10:00"
-			chargeEnd := "17:00"
-			dischargeStart := "17:00"
-			dischargeEnd := "20:00"
-			chargePowerMW := 50.0
-			dischargePowerMW := 50.0
-			if v, ok := cfg.Strategy.Params["charge_start"].(string); ok && v != "" {
-				chargeStart = v
-			}
-			if v, ok := cfg.Strategy.Params["charge_end"].(string); ok && v != "" {
-				chargeEnd = v
-			}
-			if v, ok := cfg.Strategy.Params["discharge_start"].(string); ok && v != "" {
-				dischargeStart = v
-			}
-			if v, ok := cfg.Strategy.Params["discharge_end"].(string); ok && v != "" {
-				dischargeEnd = v
-			}
-			if v, ok := getNumber(cfg.Strategy.Params, "charge_power_mw"); ok {
-				chargePowerMW = v
-			}
-			if v, ok := getNumber(cfg.Strategy.Params, "discharge_power_mw"); ok {
-				dischargePowerMW = v
-			}
-			strat = &strategy.ScheduleStrategy{Params: strategy.ScheduleParams{
-				ChargeStart:      chargeStart,
-				ChargeEnd:        chargeEnd,
-				DischargeStart:   dischargeStart,
-				DischargeEnd:     dischargeEnd,
-				ChargePowerMW:    chargePowerMW,
-				DischargePowerMW: dischargePowerMW,
-			}}
-		case "oracle":
-			// We'll force actual backtest start SOC to MinSOC below; keep oracle consistent with that.
-			orc, err := strategy.NewOracleStrategy(resp.Data, params, params.MinSOC, strategy.OracleParams{
-				SocSteps:   200,
-				PowerSteps: 10,
-			})
-			if err != nil {
-				panic(err)
-			}
-			strat = orc
-		default:
-			panic(fmt.Errorf("unsupported strategy in demo: %q", cfg.Strategy.Name))
-		}
-	}
-
-	batt, err := model.NewBattery(params, initialSOC)
-	if err != nil {
-		panic(err)
-	}
-	// Start each backtest at min SOC to avoid "free" starting inventory.
-	batt.State.SOC = batt.Params.MinSOC
-
-	intervals := resp.Data
-	if *n < len(intervals) {
-		intervals = intervals[:*n]
-	}
-
-	engine := backtest.New()
-	result, err := engine.Run(intervals, batt, strat)
-	if err != nil {
-		panic(err)
-	}
-
-	fmt.Printf("Loaded %d intervals for %s (%s)\n", len(intervals), intervals[0].Location, intervals[0].Market)
-	fmt.Printf("Strategy=%s\n", strat.Name())
-	fmt.Printf("Starting SOC=%.3f\n\n", result.Ledger[0].SOCStart)
-
-	for i := 0; i < min(12, len(result.Ledger)); i++ {
-		r := result.Ledger[i]
-		fmt.Printf(
-			"%s lmp=%7.3f  action=%-11s  req=%7.2f  p=%7.2f  soc=%.3f→%.3f  pnl=%8.2f  cum=%8.2f\n",
-			r.IntervalStartLocal.Format("2006-01-02 15:04"),
-			r.LMP,
-			string(r.Action),
-			r.RequestedPowerMW,
-			r.PowerMW,
-			r.SOCStart,
-			r.SOCEnd,
-			r.PNL,
-			r.CumPNL,
-		)
-	}
-
-	if *outCSV != "" {
-		if err := backtest.WriteLedgerCSV(*outCSV, result.Ledger); err != nil {
-			panic(err)
-		}
-		fmt.Printf("\nWrote CSV: %s\n", *outCSV)
-	}
-
-	fmt.Printf("\nDone. Final SOC=%.3f  Total PnL=$%.2f\n", result.FinalSOC, result.TotalPNL)
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
+func run(ctx context.Context, args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("demo", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {
+		fmt.Fprintln(stdout, "usage: demo --data sample_data.json --config examples/config.yaml [options]")
+		fs.SetOutput(stdout)
+		fs.PrintDefaults()
+		fs.SetOutput(io.Discard)
 	}
-	return b
-}
-
-func getNumber(m map[string]any, key string) (float64, bool) {
-	v, ok := m[key]
-	if !ok || v == nil {
-		return 0, false
+	dataPath := fs.String("data", "sample_data.json", "Path to Grid Status JSON response")
+	configPath := fs.String("config", "", "Required YAML configuration path")
+	count := fs.Int("n", 12, "Chronological interval limit (0=all)")
+	outPath := fs.String("out", "", "Optional output CSV path")
+	clock := fs.String("timezone", "market", "Schedule/display clock: market or UTC")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
 	}
-	switch x := v.(type) {
-	case float64:
-		return x, true
-	case float32:
-		return float64(x), true
-	case int:
-		return float64(x), true
-	case int64:
-		return float64(x), true
-	case uint:
-		return float64(x), true
-	case uint64:
-		return float64(x), true
-	default:
-		return 0, false
+	if fs.NArg() != 0 {
+		return fmt.Errorf("unexpected positional argument %q", fs.Arg(0))
 	}
+	if *configPath == "" {
+		return fmt.Errorf("--config is required")
+	}
+	options := experiment.Options{LimitIntervals: *count, Clock: *clock}
+	if err := experiment.ValidateOptions(options); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	input, err := config.LoadFile(*configPath)
+	if err != nil {
+		return fmt.Errorf("configuration: %w", err)
+	}
+	prepared, err := experiment.Prepare(input, config.PresetCatalog{})
+	if err != nil {
+		return err
+	}
+	response, err := data.LoadGridStatusJSON(*dataPath)
+	if err != nil {
+		return fmt.Errorf("data: %w", err)
+	}
+	outcome, err := experiment.Run(ctx, prepared, response.Data, options)
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if *outPath != "" {
+		if err := os.MkdirAll(filepath.Dir(*outPath), 0755); err != nil {
+			return fmt.Errorf("output: %w", err)
+		}
+		if err := backtest.WriteLedgerCSV(*outPath, outcome.Ledger); err != nil {
+			return fmt.Errorf("output: %w", err)
+		}
+	}
+	summary, first := outcome.Summary, outcome.Ledger[0]
+	if _, err := fmt.Fprintf(stdout, "Loaded %d intervals for %s (%s)\nStarting SOC=%.3f\n", len(outcome.Ledger), first.Location, first.Market, summary.InitialSOC); err != nil {
+		return err
+	}
+	for i := 0; i < min(12, len(outcome.Ledger)); i++ {
+		row := outcome.Ledger[i]
+		if _, err := fmt.Fprintf(stdout, "%s lmp=%7.3f action=%-11s req=%7.2f p=%7.2f soc=%.3f→%.3f pnl=%8.2f cum=%8.2f\n", row.IntervalStartLocal.Format("2006-01-02 15:04:05Z07:00"), row.LMP, row.Action, row.RequestedPowerMW, row.PowerMW, row.SOCStart, row.SOCEnd, row.PNL, row.CumPNL); err != nil {
+			return err
+		}
+	}
+	if *outPath != "" {
+		if _, err := fmt.Fprintf(stdout, "Wrote CSV: %s\n", *outPath); err != nil {
+			return err
+		}
+	}
+	_, err = fmt.Fprintf(stdout, "Final SOC=%.3f Total PnL=$%.2f\nInitial energy=%.6f MWh Final energy=%.6f MWh\nData coverage: %.6f hours; gaps: %.6f hours (%d)\nInitial stored energy has no acquisition charge; terminal energy has zero salvage value.\n", summary.FinalSOC, summary.TotalPNL, summary.InitialEnergyMWh, summary.FinalEnergyMWh, summary.CoveredDurationHours, summary.GapDurationHours, summary.GapCount)
+	return err
 }

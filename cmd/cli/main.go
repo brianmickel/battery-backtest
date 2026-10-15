@@ -1,228 +1,196 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"battery-backtest/internal/analysis"
 	"battery-backtest/internal/backtest"
 	"battery-backtest/internal/config"
 	"battery-backtest/internal/data"
+	"battery-backtest/internal/experiment"
 	"battery-backtest/internal/model"
-	"battery-backtest/internal/strategy"
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		usage()
-		os.Exit(2)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := run(ctx, os.Args[1:], os.Stdout)
+	stop()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
 	}
+}
 
-	switch os.Args[1] {
+func run(ctx context.Context, args []string, stdout io.Writer) error {
+	if len(args) == 0 {
+		return fmt.Errorf("command is required; use --help")
+	}
+	switch args[0] {
+	case "--help", "-h", "help":
+		_, err := fmt.Fprintln(stdout, "usage:\n  cli backtest --data sample_data.json --config examples/config.yaml --out results/dispatch.csv [--n 0] [--timezone market]\n  cli rank --data sample_data.json\n\nBacktest writes a grid-side dispatch CSV. Rank reports approximate foresight cash flow per location.")
+		return err
 	case "backtest":
-		cmdBacktest(os.Args[2:])
+		return runBacktest(ctx, args[1:], stdout)
 	case "rank":
-		cmdRank(os.Args[2:])
+		return runRank(ctx, args[1:], stdout)
 	default:
-		usage()
-		os.Exit(2)
+		return fmt.Errorf("unknown command %q; use --help", args[0])
 	}
 }
 
-func usage() {
-	fmt.Println("usage:")
-	fmt.Println("  cli backtest --data sample_data.json --config examples/config.yaml --out results/dispatch.csv")
-	fmt.Println("  cli rank --data sample_data.json")
-	fmt.Println("")
-	fmt.Println("notes:")
-	fmt.Println("  - backtest outputs CSV with action=CHARGING/IDLE/DISCHARGING per interval")
-	fmt.Println("  - rank computes an 'arbitrage potential' oracle score per node")
+func flags(name string, stdout io.Writer) *flag.FlagSet {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {
+		fmt.Fprintf(stdout, "usage: cli %s [options]\n", name)
+		fs.SetOutput(stdout)
+		fs.PrintDefaults()
+		fs.SetOutput(io.Discard)
+	}
+	return fs
 }
 
-func cmdBacktest(args []string) {
-	fs := flag.NewFlagSet("backtest", flag.ExitOnError)
+func runBacktest(ctx context.Context, args []string, stdout io.Writer) error {
+	fs := flags("backtest", stdout)
 	dataPath := fs.String("data", "sample_data.json", "Path to Grid Status JSON response")
-	cfgPath := fs.String("config", "", "Path to YAML config")
+	configPath := fs.String("config", "", "Required YAML configuration path")
 	outPath := fs.String("out", "results/dispatch.csv", "Output CSV path")
-	n := fs.Int("n", 0, "Optional: limit to first N intervals (0=all)")
-	_ = fs.Parse(args)
-
-	if *cfgPath == "" {
-		fmt.Println("--config is required")
-		os.Exit(2)
+	count := fs.Int("n", 0, "Chronological interval limit (0=all)")
+	clock := fs.String("timezone", "market", "Schedule/display clock: market or UTC")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
 	}
-
-	resp, err := data.LoadGridStatusJSON(*dataPath)
+	if fs.NArg() != 0 {
+		return fmt.Errorf("unexpected positional argument %q", fs.Arg(0))
+	}
+	if *configPath == "" {
+		return fmt.Errorf("--config is required")
+	}
+	if *outPath == "" {
+		return fmt.Errorf("--out must not be empty")
+	}
+	options := experiment.Options{LimitIntervals: *count, Clock: *clock}
+	if err := experiment.ValidateOptions(options); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	input, err := config.LoadFile(*configPath)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("configuration: %w", err)
 	}
-	intervals := resp.Data
-	if *n > 0 && *n < len(intervals) {
-		intervals = intervals[:*n]
-	}
-
-	cfg, err := config.Load(*cfgPath)
+	prepared, err := experiment.Prepare(input, config.PresetCatalog{})
 	if err != nil {
-		panic(err)
+		return err
 	}
-
-	batt, err := model.NewBattery(cfg.Battery.ToModelParams(), cfg.Battery.InitialSOC)
+	response, err := data.LoadGridStatusJSON(*dataPath)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("data: %w", err)
 	}
-
-	// Start each backtest at min SOC to avoid "free" starting inventory.
-	// This makes energy-out explainable purely by energy-in (minus losses) unless you later
-	// choose to support an explicit initial_soc override.
-	batt.State.SOC = batt.Params.MinSOC
-
-	strat := buildStrategy(cfg, intervals, batt)
-
-	engine := backtest.New()
-	res, err := engine.Run(intervals, batt, strat)
+	outcome, err := experiment.Run(ctx, prepared, response.Data, options)
 	if err != nil {
-		panic(err)
+		return err
 	}
-
-	// ensure output dir exists
-	if err := os.MkdirAll(filepath.Dir(*outPath), 0o755); err != nil {
-		panic(err)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	if err := backtest.WriteLedgerCSV(*outPath, res.Ledger); err != nil {
-		panic(err)
+	if err := os.MkdirAll(filepath.Dir(*outPath), 0755); err != nil {
+		return fmt.Errorf("output: %w", err)
 	}
-
-	fmt.Printf("Wrote %d rows to %s\n", len(res.Ledger), *outPath)
-	fmt.Printf("Total PnL=$%.2f Final SOC=%.3f\n", res.TotalPNL, res.FinalSOC)
+	if err := backtest.WriteLedgerCSV(*outPath, outcome.Ledger); err != nil {
+		return fmt.Errorf("output: %w", err)
+	}
+	summary := outcome.Summary
+	_, err = fmt.Fprintf(stdout, "Wrote %d rows to %s\nTotal PnL=$%.2f Final SOC=%.3f\nInitial SOC=%.3f Initial energy=%.6f MWh Final energy=%.6f MWh\nData coverage: %.6f hours; gaps: %.6f hours (%d)\nInitial stored energy has no acquisition charge; terminal energy has zero salvage value.\n", len(outcome.Ledger), *outPath, summary.TotalPNL, summary.FinalSOC, summary.InitialSOC, summary.InitialEnergyMWh, summary.FinalEnergyMWh, summary.CoveredDurationHours, summary.GapDurationHours, summary.GapCount)
+	return err
 }
 
-func cmdRank(args []string) {
-	fs := flag.NewFlagSet("rank", flag.ExitOnError)
-	dataPaths := fs.String("data", "sample_data.json", "Comma-separated JSON paths or a directory")
-	_ = fs.Parse(args)
-
+func runRank(ctx context.Context, args []string, stdout io.Writer) error {
+	fs := flags("rank", stdout)
+	dataPaths := fs.String("data", "sample_data.json", "Comma-separated JSON paths or directories")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("unexpected positional argument %q", fs.Arg(0))
+	}
 	paths := splitPaths(*dataPaths)
-	byLoc := map[string][]model.LMPInterval{}
-	for _, p := range paths {
-		info, err := os.Stat(p)
-		if err != nil {
-			panic(err)
+	if len(paths) == 0 {
+		return fmt.Errorf("--data requires at least one path")
+	}
+	byLocation := make(map[string][]model.LMPInterval)
+	for _, path := range paths {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("data: %w", err)
+		}
+		files := []string{path}
 		if info.IsDir() {
-			entries, err := os.ReadDir(p)
+			entries, err := os.ReadDir(path)
 			if err != nil {
-				panic(err)
+				return fmt.Errorf("data: %w", err)
 			}
-			for _, e := range entries {
-				if e.IsDir() {
-					continue
+			files = nil
+			for _, entry := range entries {
+				if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") {
+					files = append(files, filepath.Join(path, entry.Name()))
 				}
-				if !strings.HasSuffix(e.Name(), ".json") {
-					continue
-				}
-				resp, err := data.LoadGridStatusJSON(filepath.Join(p, e.Name()))
-				if err != nil {
-					panic(err)
-				}
-				mergeByLoc(byLoc, data.GroupByLocation(resp))
 			}
-		} else {
-			resp, err := data.LoadGridStatusJSON(p)
+		}
+		for _, file := range files {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			response, err := data.LoadGridStatusJSON(file)
 			if err != nil {
-				panic(err)
+				return fmt.Errorf("data: %w", err)
 			}
-			mergeByLoc(byLoc, data.GroupByLocation(resp))
+			for location, rows := range data.GroupByLocation(response) {
+				byLocation[location] = append(byLocation[location], rows...)
+			}
 		}
 	}
-
-	ranked := analysis.RankByOracleProfit(byLoc)
-	fmt.Printf("%-4s %-18s %-14s %-8s %-10s %-10s %-12s\n", "rank", "location", "market", "count", "p95-p05", "min/max", "oracle$")
-	for i, r := range ranked {
-		fmt.Printf(
-			"%-4d %-18s %-14s %-8d %-10.2f %-5.1f/%-5.1f %-12.2f\n",
-			i+1,
-			r.Location,
-			r.Market,
-			r.Count,
-			r.SpreadP95P05,
-			r.MinLMP,
-			r.MaxLMP,
-			r.OracleProfit,
-		)
+	ranked, err := analysis.RankByOracleProfit(ctx, byLocation)
+	if err != nil {
+		return err
 	}
-}
-
-func buildStrategy(cfg *config.Config, intervals []model.LMPInterval, batt *model.Battery) strategy.Strategy {
-	switch cfg.Strategy.Name {
-	case "schedule":
-		chargeStart := mustStr(cfg.Strategy.Params, "charge_start", "10:00")
-		dischargeStart := mustStr(cfg.Strategy.Params, "discharge_start", "17:00")
-		chargeEnd := mustStr(cfg.Strategy.Params, "charge_end", dischargeStart)
-		dischargeEnd := mustStr(cfg.Strategy.Params, "discharge_end", dischargeStart) // empty window by default
-		chargeMW := mustNum(cfg.Strategy.Params, "charge_power_mw", cfg.Battery.PowerCapacityMW)
-		dischargeMW := mustNum(cfg.Strategy.Params, "discharge_power_mw", cfg.Battery.PowerCapacityMW)
-		return &strategy.ScheduleStrategy{Params: strategy.ScheduleParams{
-			ChargeStart:      chargeStart,
-			ChargeEnd:        chargeEnd,
-			DischargeStart:   dischargeStart,
-			DischargeEnd:     dischargeEnd,
-			ChargePowerMW:    chargeMW,
-			DischargePowerMW: dischargeMW,
-		}}
-	case "oracle":
-		socSteps := int(mustNum(cfg.Strategy.Params, "soc_steps", 200))
-		powerSteps := int(mustNum(cfg.Strategy.Params, "power_steps", 10))
-		orc, err := strategy.NewOracleStrategy(intervals, batt.Params, batt.State.SOC, strategy.OracleParams{
-			SocSteps:   socSteps,
-			PowerSteps: powerSteps,
-		})
-		if err != nil {
-			panic(err)
+	if _, err := fmt.Fprintf(stdout, "%-4s %-18s %-14s %-8s %-10s %-10s %-12s\n", "rank", "location", "market", "count", "p95-p05", "min/max", "oracle$"); err != nil {
+		return err
+	}
+	for i, potential := range ranked {
+		if _, err := fmt.Fprintf(stdout, "%-4d %-18s %-14s %-8d %-10.2f %-5.1f/%-5.1f %-12.2f\n", i+1, potential.Location, potential.Market, potential.Count, potential.SpreadP95P05, potential.MinLMP, potential.MaxLMP, potential.OracleProfit); err != nil {
+			return err
 		}
-		return orc
-	default:
-		panic(fmt.Errorf("unsupported strategy: %q", cfg.Strategy.Name))
 	}
+	_, err = fmt.Fprintln(stdout, "Approximate foresight scores include 0.5 MWh initial inventory without acquisition cost; terminal energy has zero salvage value.")
+	return err
 }
 
-func splitPaths(s string) []string {
-	parts := strings.Split(s, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			out = append(out, p)
+func splitPaths(value string) []string {
+	var out []string
+	for _, path := range strings.Split(value, ",") {
+		if path = strings.TrimSpace(path); path != "" {
+			out = append(out, path)
 		}
 	}
 	return out
-}
-
-func mergeByLoc(dst, src map[string][]model.LMPInterval) {
-	for k, v := range src {
-		dst[k] = append(dst[k], v...)
-	}
-}
-
-func mustNum(m map[string]any, key string, def float64) float64 {
-	if v, ok := m[key]; ok && v != nil {
-		switch x := v.(type) {
-		case float64:
-			return x
-		case int:
-			return float64(x)
-		}
-	}
-	return def
-}
-
-func mustStr(m map[string]any, key string, def string) string {
-	if v, ok := m[key]; ok && v != nil {
-		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-			return s
-		}
-	}
-	return def
 }

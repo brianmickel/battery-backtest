@@ -2,23 +2,28 @@ package backtest
 
 import (
 	"encoding/csv"
+	"errors"
+	"io"
 	"os"
 	"strconv"
 	"time"
 )
 
-func WriteLedgerCSV(path string, ledger []LedgerRow) (err error) {
-	f, err := os.Create(path)
+func WriteLedgerCSV(path string, ledger []LedgerRow) error {
+	file, err := os.Create(path)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if cerr := f.Close(); cerr != nil && err == nil {
-			err = cerr
-		}
-	}()
+	return writeLedgerCSVAndClose(file, ledger)
+}
 
-	w := csv.NewWriter(f)
+func writeLedgerCSVAndClose(writer io.WriteCloser, ledger []LedgerRow) error {
+	writeErr := writeLedgerCSV(writer, ledger)
+	return errors.Join(writeErr, writer.Close())
+}
+
+func writeLedgerCSV(writer io.Writer, ledger []LedgerRow) error {
+	w := csv.NewWriter(writer)
 
 	header := []string{
 		"index",
