@@ -125,7 +125,7 @@ export function validateConfig(config: BacktestConfig, field: string, validation
   const dischargeStart = minute(params.discharge_start ?? '17:00')
   const dischargeEnd = minute(params.discharge_end ?? '23:59')
   if (params.charge_power_mw === 0 || params.discharge_power_mw === 0) return
-  if (chargeStart !== chargeEnd && dischargeStart !== dischargeEnd && (contains(chargeStart, chargeEnd, dischargeStart) || contains(dischargeStart, dischargeEnd, chargeStart))) validation.issue(`${field}.strategy.params`, 'Active charge and discharge windows must not overlap.')
+  if (chargeStart !== chargeEnd && dischargeStart !== dischargeEnd && (contains(chargeStart, chargeEnd, dischargeStart) || contains(dischargeStart, dischargeEnd, chargeStart))) validation.issue(`${field}.strategy.params.charge_end`, 'Active charge and discharge windows must not overlap.')
 }
 
 export function strategyDefaults(name: StrategyName): StrategyConfig {

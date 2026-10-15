@@ -14,27 +14,30 @@ import (
 
 var intervalTimestampPattern = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$`)
 
+// A local file can contain all 16 location series supported by CLI ranking.
+const maxFileIntervals = 16 * maxSeriesIntervals
+
 func LoadGridStatusJSON(path string) (*model.GridStatusLMPResponse, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = file.Close() }()
-	return decodeGridStatusResponse(file)
+	return decodeGridStatusResponse(file, maxFileIntervals)
 }
 
 // DecodeGridStatusJSON decodes every supplied row without sorting or filtering.
 // LMP and UTC timestamps are required. Local timestamps may be omitted for UTC
 // input; NormalizeSeries requires them when the selected clock is market.
 func DecodeGridStatusJSON(reader io.Reader) ([]model.LMPInterval, error) {
-	resp, err := decodeGridStatusResponse(reader)
+	resp, err := decodeGridStatusResponse(reader, maxSeriesIntervals)
 	if err != nil {
 		return nil, err
 	}
 	return resp.Data, nil
 }
 
-func decodeGridStatusResponse(reader io.Reader) (*model.GridStatusLMPResponse, error) {
+func decodeGridStatusResponse(reader io.Reader, maxIntervals int) (*model.GridStatusLMPResponse, error) {
 	var raw struct {
 		StatusCode int             `json:"status_code"`
 		Data       json.RawMessage `json:"data"`
@@ -50,23 +53,39 @@ func decodeGridStatusResponse(reader io.Reader) (*model.GridStatusLMPResponse, e
 		}
 		return nil, fmt.Errorf("response: %w", err)
 	}
-	if len(raw.Data) == 0 || bytes.Equal(bytes.TrimSpace(raw.Data), []byte("null")) {
+	raw.Data = bytes.TrimSpace(raw.Data)
+	if len(raw.Data) == 0 || bytes.Equal(raw.Data, []byte("null")) {
 		return nil, &ValidationError{Field: "intervals", Message: "required data array is missing or null"}
 	}
-	var rows []json.RawMessage
-	if err := json.Unmarshal(raw.Data, &rows); err != nil {
+	if raw.Data[0] != '[' {
+		var rows []json.RawMessage
+		return nil, fmt.Errorf("data: %w", json.Unmarshal(raw.Data, &rows))
+	}
+	rowDecoder := json.NewDecoder(bytes.NewReader(raw.Data))
+	if _, err := rowDecoder.Token(); err != nil {
 		return nil, fmt.Errorf("data: %w", err)
 	}
 	resp := &model.GridStatusLMPResponse{
 		StatusCode: raw.StatusCode,
-		Data:       make([]model.LMPInterval, 0, len(rows)),
+		Data:       make([]model.LMPInterval, 0),
 	}
-	for index, rawRow := range rows {
+	for rowDecoder.More() {
+		index := len(resp.Data)
+		if index == maxIntervals {
+			return nil, fmt.Errorf("intervals: %w (maximum %d)", ErrIntervalLimit, maxIntervals)
+		}
+		var rawRow json.RawMessage
+		if err := rowDecoder.Decode(&rawRow); err != nil {
+			return nil, fmt.Errorf("data: %w", err)
+		}
 		row, err := decodeInterval(rawRow)
 		if err != nil {
 			return nil, withIntervalIndex(index, err)
 		}
 		resp.Data = append(resp.Data, row)
+	}
+	if _, err := rowDecoder.Token(); err != nil {
+		return nil, fmt.Errorf("data: %w", err)
 	}
 	return resp, nil
 }

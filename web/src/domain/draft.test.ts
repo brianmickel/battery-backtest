@@ -80,7 +80,7 @@ describe('atomic request parsing', () => {
 
   it('checks active wraparound overlap, while explicit zero makes that direction idle', () => {
     const config = { ...single.config, strategy: { name: 'schedule', params: { charge_start: '23:00', charge_end: '02:00', discharge_start: '01:00', discharge_end: '03:00' } } }
-    expect(parseDraft({ ...single, config }).ok).toBe(false)
+    expect(parseDraft({ ...single, config })).toMatchObject({ ok: false, issues: [{ field: 'config.strategy.params.charge_end', message: 'Active charge and discharge windows must not overlap.' }] })
     expect(parseDraft({ ...single, config: { ...config, strategy: { ...config.strategy, params: { ...config.strategy.params, charge_power_mw: 0 } } } }).ok).toBe(true)
   })
 })

@@ -63,6 +63,8 @@ Backtest responses contain `status: "completed"`, `summary`, and an optional `le
 
 Ledger timestamps carry UTC and market offsets. API/CSV power uses positive discharge and negative charge. UI charts label charging positive and discharging negative; each 30-minute bucket displays average MW, not summed samples. Missing bucket coverage is idle for the average and is identified separately.
 
+Numeric offsets do not identify a named time zone or its transition rules. Market windows preserve supplied endpoints, including a 23- or 25-hour interval ending at the next civil midnight. If an active interval changes offset and requires an unknown interior midnight, the request fails with `INVALID_REQUEST`; split the source interval at known midnight boundaries or select `UTC`. Equal-offset intervals use that offset for interior boundaries. Chart bucket times preserve observed endpoints and interpolate between equal offsets; where surrounding offsets differ, they use explicitly disclosed UTC labels. CSV timestamps retain fractional seconds.
+
 All errors have `{ "error": { "code": "…", "message": "…", "field": "…", "variation": "…", "location_id": "…" } }`; the last three fields are optional. Comparison/ranking failures return no partial success array.
 
 | HTTP | Code | Meaning |

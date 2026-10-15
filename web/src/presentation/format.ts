@@ -27,11 +27,17 @@ export function formatTimestamp(timestamp: string, clock: Clock): string {
   return `${timestamp.slice(0, 19).replace('T', ' ')} UTC${offset}`;
 }
 
+export function timestampOffsetMinutes(reference: string): number {
+  if (reference.endsWith('Z')) return 0;
+  const offset = reference.slice(-6);
+  return (Number(offset.slice(1, 3)) * 60 + Number(offset.slice(4, 6))) * (offset[0] === '-' ? -1 : 1);
+}
+
 // A numeric offset identifies the supplied civil clock, not an IANA timezone.
 export function timestampAt(instantMs: number, reference: string, clock: Clock): string {
   if (clock === 'UTC' || reference.endsWith('Z')) return new Date(instantMs).toISOString();
   const offset = reference.slice(-6);
-  const minutes = (Number(offset.slice(1, 3)) * 60 + Number(offset.slice(4, 6))) * (offset[0] === '-' ? -1 : 1);
+  const minutes = timestampOffsetMinutes(reference);
   return new Date(instantMs + minutes * 60_000).toISOString().slice(0, -1) + offset;
 }
 

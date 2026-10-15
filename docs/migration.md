@@ -22,6 +22,8 @@ Deploy the frontend and server together. There is no database migration and no c
 | Windows could span idle intervals or missing data | Contiguous actions only; gaps/idle/opposite direction split windows; prices use grid-energy weights | SUMMARY-WINDOWS |
 | Chart sample powers were summed | Fixed 30-minute UTC buckets display directional MWh / 0.5 hours in MW | PRESENT-POWER |
 | Browser locale implicitly controlled time | Explicit market/UTC formatting preserves market offsets and labels UTC | PRESENT-CLOCK |
+| Offset-changing intervals could invent a midnight or chart time | Supplied endpoints are authoritative; ambiguous interior market midnights require split source intervals or UTC. Synthetic chart times with unknown offsets show UTC with an explanation | SUMMARY-WINDOWS, PRESENT-CLOCK |
+| CSV timestamps discarded fractional seconds | CSV preserves fractional seconds and supplied offsets | CLI-PARITY |
 | Demo ran without a config; invalid CLI input could panic | Demo requires `--config`; normal errors exit nonzero without a stack; `--n 0` means all for both backtest commands | CLI-PARITY, CLI-FAILURES |
 | Catalog refresh could overwrite seeded or concurrent changes | Destination is the base, seeds add IDs, failures retain old entries, and a stable exclusive lock protects atomic replacement | OPS-REFRESH, OPS-FILES |
 

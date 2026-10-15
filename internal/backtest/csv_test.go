@@ -2,6 +2,7 @@ package backtest
 
 import (
 	"bytes"
+	"encoding/csv"
 	"errors"
 	"io"
 	"strings"
@@ -10,6 +11,31 @@ import (
 
 	"battery-backtest/internal/model"
 )
+
+func TestLedgerCSVPreservesFractionalTimestampInstants(t *testing.T) {
+	start := time.Date(2026, 1, 1, 23, 59, 59, 123456789, time.FixedZone("market", -7*60*60))
+	end := start.Add(500 * time.Nanosecond)
+	row := LedgerRow{IntervalStartLocal: start, IntervalEndLocal: end, IntervalStartUTC: start.UTC(), IntervalEndUTC: end.UTC()}
+	var buffer bytes.Buffer
+	if err := writeLedgerCSV(&buffer, []LedgerRow{row}); err != nil {
+		t.Fatal(err)
+	}
+	records, err := csv.NewReader(&buffer).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []time.Time{start, end, start.UTC(), end.UTC()} {
+		got, err := time.Parse(time.RFC3339Nano, records[1][i+1])
+		if err != nil || !got.Equal(want) {
+			t.Fatalf("timestamp %d = %s, %v; want %s", i, records[1][i+1], err, want)
+		}
+		_, gotOffset := got.Zone()
+		_, wantOffset := want.Zone()
+		if gotOffset != wantOffset {
+			t.Fatalf("timestamp %d offset = %d; want %d", i, gotOffset, wantOffset)
+		}
+	}
+}
 
 func TestLedgerCSVGolden(t *testing.T) {
 	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -154,6 +155,13 @@ func TestDecodeGridStatusJSONKeepsSyntaxAndTypeErrors(t *testing.T) {
 	if !errors.As(err, &syntax) {
 		t.Fatalf("syntax error not preserved: %T %v", err, err)
 	}
+	for _, value := range []string{`{}`, `"rows"`, `true`, `42`, `1e309`} {
+		_, err := DecodeGridStatusJSON(strings.NewReader(`{"data":` + value + `}`))
+		var mismatch *json.UnmarshalTypeError
+		if !errors.As(err, &mismatch) {
+			t.Fatalf("data type error not preserved for %s: %T %v", value, err, err)
+		}
+	}
 	for _, field := range []string{"lmp", "interval_start_utc", "location"} {
 		row := jsonRow(t)
 		row[field] = []int{1, 2}
@@ -163,6 +171,57 @@ func TestDecodeGridStatusJSONKeepsSyntaxAndTypeErrors(t *testing.T) {
 			t.Fatalf("type error field/row lost for %s: %T %v", field, err, err)
 		}
 	}
+}
+
+func TestDecodeGridStatusJSONIntervalBudget(t *testing.T) {
+	const row = `{"interval_start_utc":"2026-01-01T00:00:00Z","interval_end_utc":"2026-01-01T00:30:00Z","lmp":0}`
+	withinBudget := `{"data":[` + strings.Repeat(row+",", maxSeriesIntervals-1)
+	rows, err := DecodeGridStatusJSON(strings.NewReader(withinBudget + row + "]}"))
+	if err != nil || len(rows) != maxSeriesIntervals {
+		t.Fatalf("boundary rejected: rows=%d, err=%v", len(rows), err)
+	}
+	rows, err = DecodeGridStatusJSON(strings.NewReader(withinBudget + "null]}"))
+	if rows != nil {
+		t.Fatal("invalid last permitted row returned partial success")
+	}
+	requireValidation(t, err, fmt.Sprintf("intervals[%d]", maxSeriesIntervals-1), "object")
+	for _, excess := range []string{row, "null"} {
+		rows, err := DecodeGridStatusJSON(strings.NewReader(withinBudget + row + "," + excess + "]}"))
+		if rows != nil || !errors.Is(err, ErrIntervalLimit) {
+			t.Fatalf("excess row was decoded or accepted: rows=%d, err=%v", len(rows), err)
+		}
+	}
+}
+
+func TestDecodeGridStatusJSONInvalidFirstRowAllocationBudget(t *testing.T) {
+	small := `{"data":[null]}`
+	large := `{"data":[` + strings.Repeat("null,", 262_143) + "null]}"
+	allocations := func(input string) float64 {
+		return testing.AllocsPerRun(1, func() {
+			rows, err := DecodeGridStatusJSON(strings.NewReader(input))
+			if rows != nil {
+				t.Fatal("invalid first row returned partial success")
+			}
+			requireValidation(t, err, "intervals[0]", "object")
+		})
+	}
+	smallAllocs, largeAllocs := allocations(small), allocations(large)
+	if largeAllocs > smallAllocs+64 {
+		t.Fatalf("invalid first row allocated per remaining row: small=%.0f, large=%.0f", smallAllocs, largeAllocs)
+	}
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	_, err := DecodeGridStatusJSON(strings.NewReader(large))
+	runtime.ReadMemStats(&after)
+	requireValidation(t, err, "intervals[0]", "object")
+	// Buffering the envelope may scale with input bytes, but allocating decoded
+	// intervals for rows after the invalid first row must not consume the budget.
+	allocated := after.TotalAlloc - before.TotalAlloc
+	if budget := uint64(12 * len(large)); allocated > budget {
+		t.Fatalf("invalid first row allocated %d bytes for %d-byte input (budget %d)", allocated, len(large), budget)
+	}
+	t.Logf("invalid first row: small=%.0f allocations, large=%.0f allocations, large bytes=%d", smallAllocs, largeAllocs, allocated)
 }
 
 func TestDecodeGridStatusJSONEnvelopeAndTrailingInput(t *testing.T) {
@@ -216,6 +275,51 @@ func TestLoadGridStatusJSONUsesCompleteDecoder(t *testing.T) {
 	_, err = LoadGridStatusJSON(filepath.Join(t.TempDir(), "missing.json"))
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing file error not preserved: %v", err)
+	}
+}
+
+func TestLoadGridStatusJSONAllowsCombinedLocationSeries(t *testing.T) {
+	const intervalsPerLocation = maxSeriesIntervals/2 + 1
+	first := testInterval("2026-01-01T00:00:00Z", 5*time.Minute, 0)
+	rows := make([]model.LMPInterval, 0, 2*intervalsPerLocation)
+	for _, location := range []string{"NODE_A", "NODE_B"} {
+		for index := range intervalsPerLocation {
+			row := first
+			row.Location = location
+			delta := time.Duration(index) * 5 * time.Minute
+			row.IntervalStartUTC = row.IntervalStartUTC.Add(delta)
+			row.IntervalEndUTC = row.IntervalEndUTC.Add(delta)
+			row.IntervalStartLocal = row.IntervalStartLocal.Add(delta)
+			row.IntervalEndLocal = row.IntervalEndLocal.Add(delta)
+			rows = append(rows, row)
+		}
+	}
+	input, err := json.Marshal(model.GridStatusLMPResponse{StatusCode: 200, Data: rows})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "combined.json")
+	if err := os.WriteFile(path, input, 0600); err != nil {
+		t.Fatal(err)
+	}
+	response, err := LoadGridStatusJSON(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups := GroupByLocation(response)
+	if len(groups) != 2 {
+		t.Fatalf("combined file returned %d locations, want 2", len(groups))
+	}
+	for location, group := range groups {
+		if len(group) != intervalsPerLocation {
+			t.Fatalf("location %s returned %d intervals, want %d", location, len(group), intervalsPerLocation)
+		}
+		if _, err := NormalizeSeries(group, "market"); err != nil {
+			t.Fatalf("location %s: %v", location, err)
+		}
+	}
+	if _, err := DecodeGridStatusJSON(strings.NewReader(string(input))); !errors.Is(err, ErrIntervalLimit) {
+		t.Fatalf("provider decoder lost its single-series limit: %v", err)
 	}
 }
 

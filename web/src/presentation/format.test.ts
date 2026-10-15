@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { civilDate, formatCoverage, formatCurrency, formatTimestamp, timestampAt } from './format';
+import { civilDate, formatCoverage, formatCurrency, formatTimestamp, timestampAt, timestampOffsetMinutes } from './format';
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -24,6 +24,13 @@ describe('explicit result clock', () => {
     const instant = Date.parse('2024-01-01T00:30:00Z');
     expect(timestampAt(instant, '2024-01-01T05:45:00+05:45', 'market')).toBe('2024-01-01T06:15:00.000+05:45');
     expect(timestampAt(instant, '2024-01-01T05:45:00+05:45', 'UTC')).toBe('2024-01-01T00:30:00.000Z');
+  });
+
+  it('compares numeric offsets independently of their UTC spelling', () => {
+    expect(timestampOffsetMinutes('2024-01-01T00:00:00Z')).toBe(0);
+    expect(timestampOffsetMinutes('2024-01-01T00:00:00+00:00')).toBe(0);
+    expect(timestampOffsetMinutes('2024-01-01T05:45:00+05:45')).toBe(345);
+    expect(timestampOffsetMinutes('2023-12-31T16:00:00-08:00')).toBe(-480);
   });
 });
 

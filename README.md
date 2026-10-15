@@ -19,6 +19,8 @@ The backtest and demo each charge 1 MWh at $10/MWh, discharge 1 MWh at $100/MWh,
 
 Both backtest commands require `--config`. `--n 0` uses all chronological intervals; demo otherwise defaults to 12. `--timezone market|UTC` controls schedule/display time and defaults to `market`. CLI ranking accepts comma-separated JSON files or a directory, validates every file and series, and fails the whole command on an invalid input. See `go run ./cmd/cli --help` and `go run ./cmd/demo --help`.
 
+Each provider response is limited to 17,280 intervals. A local JSON file may contain up to 276,480 intervals so ranking can group up to 16 locations; each resulting location series remains limited to 17,280 intervals. Rows are decoded and validated incrementally within these limits.
+
 ## Run the interface without an external account
 
 Use Node 24. From the repository root:

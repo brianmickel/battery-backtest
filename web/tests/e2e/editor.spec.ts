@@ -244,6 +244,25 @@ test('server field errors retain the request and allow corrected resubmission', 
   expect(requests[1].postDataJSON()).toMatchObject({ config: { battery: { initial_soc: .5 } } });
 });
 
+test('overlap errors focus an actionable schedule field and allow correction', async ({ page }) => {
+  const requests = await mockApp(page);
+  await openApp(page);
+  await importJson(page, { ...single, config: { ...single.config, strategy: { name: 'schedule', params: { charge_start: '10:00', charge_end: '17:00', discharge_start: '17:00', discharge_end: '23:00' } } } });
+  await useForm(page);
+  const chargeEnd = page.getByLabel('Charge end (HH:MM)', { exact: true });
+  await chargeEnd.fill('18:00');
+  await page.getByRole('button', { name: 'Run backtest', exact: true }).click();
+  expect(requests).toHaveLength(0);
+  await page.getByRole('button', { name: /Active charge and discharge windows must not overlap/ }).click();
+  await expect(chargeEnd).toBeFocused();
+  await expect(chargeEnd).toHaveAttribute('aria-invalid', 'true');
+  await chargeEnd.fill('17:00');
+  await page.getByRole('button', { name: 'Run backtest', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Summary Metrics' })).toBeVisible();
+  expect(requests).toHaveLength(1);
+  expect(requests[0].postDataJSON()).toMatchObject({ config: { strategy: { params: { charge_end: '17:00' } } } });
+});
+
 test('clipboard rejection shows feedback without an unhandled rejection', async ({ page }) => {
   await mockApp(page);
   const pageErrors: string[] = [];

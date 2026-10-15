@@ -139,6 +139,10 @@ func execute(ctx context.Context, prepared Prepared, rows []model.LMPInterval, c
 		return Outcome{}, err
 	}
 	summary, err := backtest.Summarize(*result, battery.Params, clock)
+	var invalid *backtest.SummaryValidationError
+	if errors.As(err, &invalid) {
+		return Outcome{}, &ValidationError{Field: invalid.Field, Message: invalid.Message}
+	}
 	if err != nil {
 		return Outcome{}, err
 	}

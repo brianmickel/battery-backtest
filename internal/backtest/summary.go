@@ -43,6 +43,11 @@ type Summary struct {
 	DischargeWindows     []DischargeWindow
 }
 
+// SummaryValidationError identifies input that cannot define civil-day windows.
+type SummaryValidationError struct{ Field, Message string }
+
+func (e *SummaryValidationError) Error() string { return e.Field + ": " + e.Message }
+
 // Summarize reads the chronological physical ledger without replaying dispatch.
 // The selected clock controls presentation and civil-day window boundaries only.
 func Summarize(result Result, params model.BatteryParams, clock string) (Summary, error) {
@@ -58,23 +63,22 @@ func Summarize(result Result, params model.BatteryParams, clock string) (Summary
 
 	summary := Summary{Timezone: clock, TotalIntervals: len(result.Ledger)}
 	var active summaryWindow
-	var covered, gaps time.Duration
 	for i, row := range result.Ledger {
 		if err := validateSummaryRow(row, clock); err != nil {
 			return Summary{}, fmt.Errorf("summary ledger row %d: %w", i, err)
 		}
 		if i > 0 {
-			gap := row.IntervalStartUTC.Sub(result.Ledger[i-1].IntervalEndUTC)
-			if gap < 0 {
+			previousEnd := result.Ledger[i-1].IntervalEndUTC
+			if row.IntervalStartUTC.Before(previousEnd) {
 				return Summary{}, fmt.Errorf("summary ledger row %d: intervals must be ordered and nonoverlapping", i)
 			}
-			if gap > 0 {
+			if row.IntervalStartUTC.After(previousEnd) {
 				summary.GapCount++
-				gaps += gap
+				summary.GapDurationHours += summaryHoursBetween(previousEnd, row.IntervalStartUTC)
 			}
 		}
-		duration := row.IntervalEndUTC.Sub(row.IntervalStartUTC)
-		covered += duration
+		durationHours := summaryHoursBetween(row.IntervalStartUTC, row.IntervalEndUTC)
+		summary.CoveredDurationHours += durationHours
 		start, end := row.IntervalStartLocal, row.IntervalEndLocal
 		if clock == "UTC" {
 			start, end = row.IntervalStartUTC.UTC(), row.IntervalEndUTC.UTC()
@@ -101,18 +105,25 @@ func Summarize(result Result, params model.BatteryParams, clock string) (Summary
 			active.flush(&summary)
 			continue
 		}
+		_, startOffset := start.Zone()
+		_, endOffset := end.Zone()
+		if startOffset != endOffset && summaryNeedsInteriorMidnight(start, end) {
+			return Summary{}, &SummaryValidationError{
+				Field:   fmt.Sprintf("intervals[%d].interval_end_local", i),
+				Message: "offset-changing active interval requires an unknown interior midnight; split the interval at midnight or select UTC",
+			}
+		}
 
 		remaining := energy
 		for start.Before(end) {
 			pieceEnd := end
-			year, month, day := start.Date()
-			midnight := time.Date(year, month, day+1, 0, 0, 0, 0, start.Location())
-			if midnight.Before(end) && !sameSummaryDate(start, end) {
-				pieceEnd = midnight
+			if summaryNeedsInteriorMidnight(start, end) {
+				year, month, day := start.Date()
+				pieceEnd = time.Date(year, month, day+1, 0, 0, 0, 0, start.Location())
 			}
 			pieceEnergy := remaining
 			if pieceEnd.Before(end) {
-				pieceEnergy = energy * (float64(pieceEnd.Sub(start)) / float64(duration))
+				pieceEnergy = energy * (summaryHoursBetween(start, pieceEnd) / durationHours)
 			}
 			if active.action != action || !active.End.Equal(start) || !sameSummaryDate(active.Start, start) {
 				active.flush(&summary)
@@ -130,8 +141,6 @@ func Summarize(result Result, params model.BatteryParams, clock string) (Summary
 		}
 	}
 	active.flush(&summary)
-	summary.CoveredDurationHours = covered.Hours()
-	summary.GapDurationHours = gaps.Hours()
 	if !finiteSummaryValue(summary.TotalPNL) || !finiteSummaryValue(summary.EnergyChargedMWh) || !finiteSummaryValue(summary.EnergyDischargedMWh) {
 		return Summary{}, fmt.Errorf("summary totals exceed finite numeric range")
 	}
@@ -161,6 +170,26 @@ func sameSummaryDate(a, b time.Time) bool {
 	ay, am, ad := a.Date()
 	by, bm, bd := b.Date()
 	return ay == by && am == bm && ad == bd
+}
+
+func summaryHoursBetween(start, end time.Time) float64 {
+	// Unix seconds cover RFC3339's date range without time.Duration's limit.
+	seconds := end.Unix() - start.Unix()
+	nanoseconds := end.Nanosecond() - start.Nanosecond()
+	if nanoseconds < 0 {
+		seconds--
+		nanoseconds += 1e9
+	}
+	return float64(seconds)/3600 + float64(nanoseconds)/float64(time.Hour)
+}
+
+func summaryNeedsInteriorMidnight(start, end time.Time) bool {
+	if sameSummaryDate(start, end) {
+		return false
+	}
+	year, month, day := start.Date()
+	nextDate := time.Date(year, month, day+1, 0, 0, 0, 0, time.UTC)
+	return !sameSummaryDate(nextDate, end) || end.Hour() != 0 || end.Minute() != 0 || end.Second() != 0 || end.Nanosecond() != 0
 }
 
 func validateSummaryRow(row LedgerRow, clock string) error {

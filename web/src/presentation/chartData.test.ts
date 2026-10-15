@@ -54,7 +54,7 @@ describe('average directional power buckets', () => {
     expect(buckets).toHaveLength(4);
     expect(buckets.map(bucket => bucket.coveredHours)).toEqual([.5, 0, 0, .5]);
     expect(buckets.map(bucket => bucket.chargeMWh)).toEqual([50, 0, 0, 50]);
-    expect(buckets[1].timestamp).toBe('2024-01-01T00:30:00.000Z');
+    expect(buckets[1].timestamp).toBe(rows[0].interval_end_local);
   });
 
   it('keeps the shared midnight fixture on its supplied market dates', () => {
@@ -79,6 +79,66 @@ describe('average directional power buckets', () => {
     expect(rows).toEqual(original);
   });
 
+  it.each([
+    ['spring', '2024-03-10T09:30:00Z', '2024-03-10T11:30:00Z', '2024-03-10T01:30:00-08:00', '2024-03-10T04:30:00-07:00'],
+    ['fall', '2024-11-03T08:30:00Z', '2024-11-03T10:30:00Z', '2024-11-03T01:30:00-07:00', '2024-11-03T02:30:00-08:00'],
+  ])('uses UTC for unobserved bucket labels inside a %s offset change without changing energy', (_season, start, end, localStart, localEnd) => {
+    const row = {
+      ...halfHour[0], interval_start_utc: start, interval_end_utc: end,
+      interval_start_local: localStart, interval_end_local: localEnd,
+      energy_from_grid_mwh: 80, energy_to_grid_mwh: 20,
+    };
+    const buckets = powerBuckets([row], 'market');
+    expect(buckets[0]).toMatchObject({ timestamp: localStart, timestampSource: 'market-observed' });
+    for (const bucket of buckets.slice(1)) {
+      expect(bucket.timestamp).toBe(new Date(bucket.startMs).toISOString());
+      expect(bucket.timestampSource).toBe('utc-fallback');
+    }
+    expect(buckets.map(bucket => bucket.chargeMWh)).toEqual([20, 20, 20, 20]);
+    expect(buckets.map(bucket => bucket.dischargeMWh)).toEqual([5, 5, 5, 5]);
+    expect(buckets.map(bucket => bucket.chargeMW)).toEqual([40, 40, 40, 40]);
+    expect(buckets.map(bucket => bucket.dischargeMW)).toEqual([-10, -10, -10, -10]);
+    expect(buckets.map(bucket => bucket.coveredHours)).toEqual([.5, .5, .5, .5]);
+    expect(pnlPoints([row], 'market').map(point => point.timestamp)).toEqual([localStart, localEnd]);
+    expect(powerBuckets([row], 'UTC').every(bucket => bucket.timestampSource === 'utc')).toBe(true);
+  });
+
+  it.each([
+    ['spring', '2024-03-10T09:00:00Z', '2024-03-10T09:30:00Z', '2024-03-10T11:00:00Z', '2024-03-10T11:30:00Z', '2024-03-10T01:00:00-08:00', '2024-03-10T01:30:00-08:00', '2024-03-10T04:00:00-07:00', '2024-03-10T04:30:00-07:00'],
+    ['fall', '2024-11-03T08:00:00Z', '2024-11-03T08:30:00Z', '2024-11-03T10:00:00Z', '2024-11-03T10:30:00Z', '2024-11-03T01:00:00-07:00', '2024-11-03T01:30:00-07:00', '2024-11-03T02:00:00-08:00', '2024-11-03T02:30:00-08:00'],
+  ])('brackets a %s gap with the previous end and next start', (_season, start, end, nextStart, nextEnd, localStart, localEnd, nextLocalStart, nextLocalEnd) => {
+    const rows = [
+      { ...halfHour[0], interval_start_utc: start, interval_end_utc: end, interval_start_local: localStart, interval_end_local: localEnd },
+      { ...halfHour[0], interval_start_utc: nextStart, interval_end_utc: nextEnd, interval_start_local: nextLocalStart, interval_end_local: nextLocalEnd },
+    ];
+    const buckets = powerBuckets(rows, 'market');
+    expect(buckets.map(bucket => bucket.timestampSource)).toEqual(['market-observed', 'market-observed', 'utc-fallback', 'utc-fallback', 'market-observed']);
+    expect(buckets[1].timestamp).toBe(localEnd);
+    expect(buckets[4].timestamp).toBe(nextLocalStart);
+    expect(buckets.slice(2, 4).map(bucket => bucket.timestamp)).toEqual([
+      new Date(Date.parse(end) + 30 * 60_000).toISOString(), new Date(Date.parse(end) + 60 * 60_000).toISOString(),
+    ]);
+    expect(buckets.map(bucket => bucket.coveredHours)).toEqual([.5, 0, 0, 0, .5]);
+    expect(buckets.map(bucket => bucket.chargeMWh)).toEqual([50, 0, 0, 0, 50]);
+  });
+
+  it('uses the previous end offset for a gap after an interval changes offset', () => {
+    const rows = [
+      { ...halfHour[0], interval_start_utc: '2024-11-03T08:30:00Z', interval_end_utc: '2024-11-03T09:00:00Z', interval_start_local: '2024-11-03T01:30:00-07:00', interval_end_local: '2024-11-03T01:00:00-08:00' },
+      { ...halfHour[0], interval_start_utc: '2024-11-03T10:00:00Z', interval_end_utc: '2024-11-03T10:30:00Z', interval_start_local: '2024-11-03T02:00:00-08:00', interval_end_local: '2024-11-03T02:30:00-08:00' },
+    ];
+    const buckets = powerBuckets(rows, 'market');
+    expect(buckets[1]).toMatchObject({ timestamp: rows[0].interval_end_local, timestampSource: 'market-observed' });
+    expect(buckets[2]).toMatchObject({ timestamp: '2024-11-03T01:30:00.000-08:00', timestampSource: 'market-projected' });
+    expect(buckets.some(bucket => bucket.timestampSource === 'utc-fallback')).toBe(false);
+  });
+
+  it('distinguishes genuine UTC market observations and projections from fallback', () => {
+    const buckets = powerBuckets([{ ...halfHour[0], interval_end_utc: '2024-01-01T01:00:00Z', interval_end_local: '2024-01-01T01:00:00+00:00' }], 'market');
+    expect(buckets.map(bucket => bucket.timestampSource)).toEqual(['market-observed', 'market-projected']);
+    expect(buckets[1].timestamp).toBe('2024-01-01T00:30:00.000Z');
+  });
+
   it('anchors buckets to UTC even for quarter-hour market offsets', () => {
     const row = {
       ...halfHour[0],
@@ -88,6 +148,7 @@ describe('average directional power buckets', () => {
     const bucket = powerBuckets([row], 'market')[0];
     expect(bucket.startMs).toBe(Date.parse('2024-01-01T00:00:00Z'));
     expect(formatTimestamp(bucket.timestamp, 'market')).toBe('2024-01-01 05:45:00 UTC+05:45');
+    expect(bucket.timestampSource).toBe('market-projected');
   });
 
   it('returns no points for an empty ledger', () => {

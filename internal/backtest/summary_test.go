@@ -1,6 +1,7 @@
 package backtest
 
 import (
+	"errors"
 	"math"
 	"reflect"
 	"testing"
@@ -129,6 +130,52 @@ func TestSummaryCoverageDistinguishesEqualOuterWindowAndCount(t *testing.T) {
 	}
 }
 
+func TestSummaryCoverageAcrossMillennia(t *testing.T) {
+	rows := []LedgerRow{
+		summaryTestRow(t, "1000-01-01T00:00:00Z", "1000-01-01T01:00:00Z", 0, 0, 0),
+		summaryTestRow(t, "2000-01-01T00:00:00Z", "2000-01-01T01:00:00Z", 0, 0, 0),
+		summaryTestRow(t, "3000-01-01T00:00:00Z", "3000-01-01T01:00:00Z", 0, 0, 0),
+	}
+	got := mustSummarize(t, rows, "UTC")
+	assertSummaryNear(t, got.CoveredDurationHours, 3)
+	// The two millennia contain 485 leap days; two covered hours precede gaps.
+	assertSummaryNear(t, got.GapDurationHours, (2000*365+485)*24-2)
+	if got.GapCount != 2 {
+		t.Fatalf("gap count = %d, want 2", got.GapCount)
+	}
+}
+
+func TestSummarySubsecondCoverageAndGaps(t *testing.T) {
+	rows := []LedgerRow{
+		summaryTestRow(t, "2026-01-01T00:00:00.75Z", "2026-01-01T00:00:01.25Z", 0, 0, 0),
+		summaryTestRow(t, "2026-01-01T00:00:01.75Z", "2026-01-01T00:00:02.25Z", 0, 0, 0),
+	}
+	got := mustSummarize(t, rows, "UTC")
+	assertSummaryNear(t, got.CoveredDurationHours, 1.0/3600)
+	assertSummaryNear(t, got.GapDurationHours, .5/3600)
+}
+
+func TestSummaryCoverageBeyondDurationRange(t *testing.T) {
+	rows := []LedgerRow{
+		summaryTestRow(t, "1000-01-01T00:00:00Z", "2000-01-01T00:00:00Z", 0, 0, 0),
+		summaryTestRow(t, "2000-01-01T00:00:00Z", "3000-01-01T00:00:00Z", 0, 0, 0),
+	}
+	got := mustSummarize(t, rows, "UTC")
+	assertSummaryNear(t, got.CoveredDurationHours, (2000*365+485)*24)
+	assertSummaryNear(t, got.GapDurationHours, 0)
+}
+
+func TestSummaryNanosecondMidnightAllocation(t *testing.T) {
+	row := summaryTestRow(t, "2026-01-01T23:59:59.999999999Z", "2026-01-02T00:00:00.000000001Z", 10, 2, 0)
+	got := mustSummarize(t, []LedgerRow{row}, "UTC")
+	if got.CoveredDurationHours != 2/float64(time.Hour) || len(got.ChargeWindows) != 2 {
+		t.Fatalf("nanosecond interval summary = %+v", got)
+	}
+	for _, window := range got.ChargeWindows {
+		assertSummaryNear(t, window.EnergyMWh, 1)
+	}
+}
+
 func TestSummaryMidnightSplitUsesSelectedClock(t *testing.T) {
 	rows := []LedgerRow{
 		summaryTestRow(t, "2026-01-01T23:30:00-07:00", "2026-01-02T01:30:00-07:00", -5, 4, 0),
@@ -201,7 +248,8 @@ func TestSummaryDSTUsesInstantsAndCivilDates(t *testing.T) {
 	}
 
 	rows := []LedgerRow{
-		summaryTestRow(t, "2026-10-31T23:30:00-06:00", "2026-11-01T01:30:00-07:00", 10, 6, 0),
+		summaryTestRow(t, "2026-10-31T23:30:00-06:00", "2026-11-01T00:00:00-06:00", 10, 1, 0),
+		summaryTestRow(t, "2026-11-01T00:00:00-06:00", "2026-11-01T01:30:00-07:00", 10, 5, 0),
 	}
 	got := mustSummarize(t, rows, "market")
 	if len(got.ChargeWindows) != 2 {
@@ -212,6 +260,50 @@ func TestSummaryDSTUsesInstantsAndCivilDates(t *testing.T) {
 	assertSummaryNear(t, got.ChargeWindows[0].EnergyMWh, 1)
 	assertSummaryNear(t, got.ChargeWindows[1].EnergyMWh, 5)
 	assertSummaryNear(t, got.CoveredDurationHours, 3)
+}
+
+func TestSummaryOffsetChangeEndingAtNextMidnight(t *testing.T) {
+	for _, tc := range []struct {
+		name, start, end string
+		hours            float64
+	}{
+		{"spring", "2024-03-10T00:00:00-08:00", "2024-03-11T00:00:00-07:00", 23},
+		{"fall", "2024-11-03T00:00:00-07:00", "2024-11-04T00:00:00-08:00", 25},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			row := summaryTestRow(t, tc.start, tc.end, 10, tc.hours, 0)
+			got := mustSummarize(t, []LedgerRow{row}, "market")
+			if len(got.ChargeWindows) != 1 {
+				t.Fatalf("supplied midnight endpoint split: %+v", got.ChargeWindows)
+			}
+			assertSummaryWindow(t, got.ChargeWindows[0].TimeWindow, tc.start, tc.end)
+			assertSummaryNear(t, got.ChargeWindows[0].EnergyMWh, tc.hours)
+			assertSummaryNear(t, got.CoveredDurationHours, tc.hours)
+		})
+	}
+}
+
+func TestSummaryRejectsUnknownInteriorMidnight(t *testing.T) {
+	for _, tc := range []struct{ name, start, end string }{
+		{"overnight", "2026-10-31T23:30:00-06:00", "2026-11-01T01:30:00-07:00"},
+		{"multiple days ending at midnight", "2024-11-02T00:00:00-07:00", "2024-11-04T00:00:00-08:00"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			row := summaryTestRow(t, tc.start, tc.end, 10, 2, 0)
+			_, err := Summarize(Result{Ledger: []LedgerRow{row}}, model.BatteryParams{EnergyCapacityMWh: 10}, "market")
+			var invalid *SummaryValidationError
+			if !errors.As(err, &invalid) || invalid.Field != "intervals[0].interval_end_local" {
+				t.Fatalf("unknown interior midnight error = %v", err)
+			}
+			utc := mustSummarize(t, []LedgerRow{row}, "UTC")
+			assertSummaryNear(t, utc.EnergyChargedMWh, 2)
+			row.EnergyFromGridMWh, row.PNL = 0, 0
+			idle := mustSummarize(t, []LedgerRow{row}, "market")
+			if len(idle.ChargeWindows)+len(idle.DischargeWindows) != 0 {
+				t.Fatalf("idle interval created windows: %+v", idle)
+			}
+		})
+	}
 }
 
 func TestSummaryRepeatedHourWindowsRemainChronological(t *testing.T) {

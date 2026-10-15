@@ -83,7 +83,7 @@ func fmtTime(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.Format(time.RFC3339)
+	return t.Format(time.RFC3339Nano)
 }
 
 func fmtFloat(x float64) string {
