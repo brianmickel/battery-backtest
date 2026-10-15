@@ -36,7 +36,7 @@ func refreshCatalog(ctx context.Context, provider locationProvider, apiKey strin
 	if err != nil {
 		return result, err
 	}
-	defer lock.Close()
+	defer func() { _ = lock.Close() }()
 
 	locations, err := loadRefreshLocations(path, options.seed, options.dataset)
 	if err != nil {
