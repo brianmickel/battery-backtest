@@ -18,10 +18,8 @@ function battery(value: unknown, field: string, validation: Validation): Battery
   }
   for (const key of batteryFields) {
     if (key === 'name' || raw[key] === undefined) continue
-    const max = ['charge_efficiency', 'discharge_efficiency', 'min_soc', 'max_soc', 'initial_soc'].includes(key) ? 1 : Number.MAX_VALUE
-    const parsed = validation.number(raw[key], `${field}.${key}`, 0, max)
+    const parsed = validation.number(raw[key], `${field}.${key}`, -Number.MAX_VALUE, Number.MAX_VALUE)
     if (parsed !== undefined) result[key] = parsed
-    if (parsed === 0 && ['energy_capacity_mwh', 'power_capacity_mw', 'charge_efficiency', 'discharge_efficiency'].includes(key)) validation.issue(`${field}.${key}`, 'Must be greater than zero.')
   }
   return result
 }
@@ -38,17 +36,21 @@ function strategy(value: unknown, field: string, validation: Validation): Strate
   const parsed: StrategyParams = {}
   for (const key of ['charge_start', 'charge_end', 'discharge_start', 'discharge_end'] as const) {
     if (params[key] === undefined) continue
-    if (typeof params[key] !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(params[key])) validation.issue(`${field}.params.${key}`, 'Enter a time from 00:00 to 23:59.')
+    if (typeof params[key] !== 'string') validation.issue(`${field}.params.${key}`, 'Expected a time string.')
     else parsed[key] = params[key]
   }
   for (const key of ['charge_power_mw', 'discharge_power_mw'] as const) {
-    const number = validation.number(params[key], `${field}.params.${key}`, 0, Number.MAX_VALUE)
+    const number = validation.number(params[key], `${field}.params.${key}`, -Number.MAX_VALUE, Number.MAX_VALUE)
     if (number !== undefined) parsed[key] = number
   }
-  const soc = validation.number(params.soc_steps, `${field}.params.soc_steps`, 2, 1000, true)
-  const power = validation.number(params.power_steps, `${field}.params.power_steps`, 1, 50, true)
+  const soc = validation.number(params.soc_steps, `${field}.params.soc_steps`, Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, true)
+  const power = validation.number(params.power_steps, `${field}.params.power_steps`, Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, true)
   if (soc !== undefined) parsed.soc_steps = soc
   if (power !== undefined) parsed.power_steps = power
+  if (result.name !== undefined) {
+    const incompatible = result.name === 'schedule' ? oracleFields : scheduleFields
+    for (const key of incompatible) if (params[key] !== undefined) validation.issue(`${field}.params.${key}`, `This parameter is not supported by ${result.name}.`)
+  }
   result.params = parsed
   return result
 }
@@ -87,6 +89,12 @@ function contains(start: number, end: number, point: number): boolean {
 
 export function validateConfig(config: BacktestConfig, field: string, validation: Validation): void {
   const b = config.battery ?? {}
+  for (const key of batteryFields) {
+    if (key === 'name' || b[key] === undefined) continue
+    const max = ['charge_efficiency', 'discharge_efficiency', 'min_soc', 'max_soc', 'initial_soc'].includes(key) ? 1 : Number.MAX_VALUE
+    validation.number(b[key], `${field}.battery.${key}`, 0, max)
+    if (b[key] === 0 && ['energy_capacity_mwh', 'power_capacity_mw', 'charge_efficiency', 'discharge_efficiency'].includes(key)) validation.issue(`${field}.battery.${key}`, 'Must be greater than zero.')
+  }
   if (config.battery_file === undefined) {
     for (const key of ['energy_capacity_mwh', 'power_capacity_mw', 'charge_efficiency', 'discharge_efficiency', 'min_soc', 'max_soc'] as const) {
       if (b[key] === undefined) validation.issue(`${field}.battery.${key}`, 'Required for a custom battery.')
@@ -102,7 +110,16 @@ export function validateConfig(config: BacktestConfig, field: string, validation
   const params = settings.params ?? {}
   const incompatible = settings.name === 'schedule' ? oracleFields : scheduleFields
   for (const key of incompatible) if (params[key] !== undefined) validation.issue(`${field}.strategy.params.${key}`, `This parameter is not supported by ${settings.name}.`)
-  if (settings.name !== 'schedule') return
+  if (settings.name === 'oracle') {
+    validation.number(params.soc_steps, `${field}.strategy.params.soc_steps`, 2, 1000, true)
+    validation.number(params.power_steps, `${field}.strategy.params.power_steps`, 1, 50, true)
+    return
+  }
+  for (const key of ['charge_start', 'charge_end', 'discharge_start', 'discharge_end'] as const) {
+    const value = params[key]
+    if (value !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) validation.issue(`${field}.strategy.params.${key}`, 'Enter a time from 00:00 to 23:59.')
+  }
+  for (const key of ['charge_power_mw', 'discharge_power_mw'] as const) validation.number(params[key], `${field}.strategy.params.${key}`, 0, Number.MAX_VALUE)
   const chargeStart = minute(params.charge_start ?? '10:00')
   const chargeEnd = minute(params.charge_end ?? params.discharge_start ?? '17:00')
   const dischargeStart = minute(params.discharge_start ?? '17:00')

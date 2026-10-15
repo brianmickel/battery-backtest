@@ -63,6 +63,11 @@ describe('credential-scoped transport', () => {
     await expect(apiService.runBacktest(singleRequest(), 'sentinel-secret')).rejects.toMatchObject({ code: 'INTERNAL_ERROR', message: 'The server returned an invalid response.' })
   })
 
+  it.each(['2024-02-30T00:00:00Z', '2024-01-01T24:00:00Z', '2024-01-01T00:00Z', '2024-01-01T00:00:00+24:00'])('rejects normalized or incomplete timestamps %s', async start => {
+    transport.post.mockResolvedValueOnce({ data: { status: 'completed', summary: { ...summary, backtest_window: { ...summary.backtest_window, start } } } })
+    await expect(apiService.runBacktest(singleRequest(), 'sentinel-secret')).rejects.toMatchObject({ code: 'INTERNAL_ERROR', message: 'The server returned an invalid response.' })
+  })
+
   it('preserves structured field errors but discards raw transport errors', async () => {
     transport.post.mockRejectedValueOnce({ isAxiosError: true, response: { data: { error: { code: 'INVALID_REQUEST', message: 'Initial SOC exceeds the preset maximum.', field: 'config.battery.initial_soc' } } } })
     await expect(apiService.runBacktest(singleRequest(), 'secret')).rejects.toMatchObject({ code: 'INVALID_REQUEST', field: 'config.battery.initial_soc' })

@@ -54,6 +54,19 @@ describe('atomic request parsing', () => {
     expect(parseDraft({ ...single, config: { ...single.config, battery: { ...single.config.battery, min_soc: 0.5, max_soc: 0.5, initial_soc: 0.5 } } }).ok).toBe(true)
   })
 
+  it('rejects explicitly incompatible base shapes before extracting a legacy key', () => {
+    const result = parseDraft({ ...comparison, api_key: 'sentinel-key', base_config: { ...single.config, strategy: { name: 'oracle', params: { charge_start: '10:00' } } }, variations: [{ name: 'changed', config: { strategy: { name: 'schedule' } } }] })
+    expect(result.ok).toBe(false)
+    expect(result).not.toHaveProperty('importedApiKey')
+  })
+
+  it('resolves physical and strategy bounds after variation overrides', () => {
+    const result = parseDraft({ ...comparison, base_config: { ...single.config, battery: { ...single.config.battery, power_capacity_mw: 0 }, strategy: { name: 'schedule', params: { charge_start: 'invalid', charge_power_mw: -1 } } }, variations: [{ name: 'corrected', config: { battery: { power_capacity_mw: 1 }, strategy: { params: { charge_start: '10:00', charge_power_mw: 0 } } } }] })
+    expect(result.ok).toBe(true)
+    const oracle = parseDraft({ ...comparison, base_config: { ...single.config, strategy: { name: 'oracle', params: { soc_steps: 0 } } }, variations: [{ name: 'corrected', config: { strategy: { params: { soc_steps: 200 } } } }] })
+    expect(oracle.ok).toBe(true)
+  })
+
   it('accepts an incomplete common patch when every variation supplies the required values', () => {
     expect(parseDraft({ ...comparison, base_config: {}, variations: [{ name: 'complete', config: single.config }] }).ok).toBe(true)
   })

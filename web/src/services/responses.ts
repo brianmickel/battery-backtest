@@ -1,8 +1,13 @@
 import type { BacktestResponse, BacktestSummary, BatteryInfo, ChargeWindow, CompareBacktestResponse, DatasetInfo, DischargeWindow, LedgerRow, LocationInfo, Ranking, StrategyInfo, TimeWindow } from './api'
 import { isObject } from '../domain/validation'
+import { calendarDay } from '../domain/calendar'
 
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
-const timestamp = (value: unknown): value is string => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(value) && Number.isFinite(Date.parse(value))
+function timestamp(value: unknown): value is string {
+  return typeof value === 'string' &&
+    /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,9})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.test(value) &&
+    calendarDay(value.slice(0, 10)) !== undefined && Number.isFinite(Date.parse(value))
+}
 function isTimeWindow(value: unknown): value is TimeWindow {
   return isObject(value) && timestamp(value.start) && timestamp(value.end)
 }
