@@ -7,8 +7,8 @@
 #   max_soc: 0.90
 #   degradation_cost_per_mwh: 2.0
 
-# battery_file: examples/batteries/1_moss_landing.yaml
-battery_file: examples/batteries/0_flagstaff_theoretical.yaml
+# battery_file: batteries/1_moss_landing.yaml
+battery_file: batteries/0_flagstaff_theoretical.yaml
 
 strategy:
   name: schedule

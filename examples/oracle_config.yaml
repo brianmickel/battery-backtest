@@ -1,4 +1,4 @@
-battery_file: examples/batteries/4_minety_battery_storage.yaml
+battery_file: batteries/4_minety_battery_storage.yaml
 
 strategy:
   name: oracle
