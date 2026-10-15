@@ -1,818 +1,170 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { apiService, getErrorMessage, BacktestRequest, CompareBacktestRequest, BatteryInfo, StrategyInfo, StrategyParamValue } from '../services/api';
+import { apiService } from '../services/api';
+import { applyDraftAction, parseDraft, parseFormEdits, serializeDraft } from '../domain/draft';
+import type { DraftAction, FieldIssue, FormEdits, FormField, ParseResult, RequestDraft } from '../domain/types';
 import { useApiKey } from '../hooks/useApiKey';
+import { BatterySection } from './request-editor/BatterySection';
+import { DataSourceSection } from './request-editor/DataSourceSection';
+import { JsonEditor } from './request-editor/JsonEditor';
+import { OptionsSection } from './request-editor/OptionsSection';
+import { RequestPreview } from './request-editor/RequestPreview';
+import { StrategySection } from './request-editor/StrategySection';
+import { fieldID } from './request-editor/fields';
 
 interface BacktestFormProps {
-  onSubmit: (request: BacktestRequest | CompareBacktestRequest) => void;
+  onSubmit: (draft: RequestDraft, apiKey: string) => Promise<FieldIssue[]>;
   isLoading?: boolean;
 }
 
-export function BacktestForm({ onSubmit, isLoading }: BacktestFormProps) {
-  const { apiKey, getApiKey } = useApiKey();
-  
-  // Input mode: 'form' or 'json'
-  const [inputMode, setInputMode] = useState<'form' | 'json'>('form');
-  const [jsonText, setJsonText] = useState('');
-  const [jsonError, setJsonError] = useState<string | null>(null);
-  const [jsonSuccess, setJsonSuccess] = useState(false);
-  
-  // Data source state
-  const [datasetId, setDatasetId] = useState('caiso_lmp_real_time_5_min');
-  const [locationId, setLocationId] = useState('TH_NP15_GEN-APND');
-  const [startDate, setStartDate] = useState('2026-01-01');
-  const [endDate, setEndDate] = useState('2026-01-07');
-  const [timezone, setTimezone] = useState('market');
-  const [dateError, setDateError] = useState<string | null>(null);
+function initialDraft(): RequestDraft {
+  const end = new Date().toISOString().slice(0, 10);
+  const start = new Date(Date.parse(`${end}T00:00:00Z`) - 7 * 86_400_000).toISOString().slice(0, 10);
+  return {
+    kind: 'single',
+    data_source: { type: 'gridstatus', dataset_id: 'caiso_lmp_real_time_5_min', location_id: 'TH_NP15_GEN-APND', start_date: start, end_date: end, timezone: 'market' },
+    config: { battery_file: '1_moss_landing', strategy: { name: 'schedule' } },
+    options: { include_ledger: true },
+  };
+}
 
-  // Battery state
-  const [useBatteryPreset, setUseBatteryPreset] = useState(true);
-  const [batteryFile, setBatteryFile] = useState('1_moss_landing');
-  const [customBattery, setCustomBattery] = useState({
-    energy_capacity_mwh: 3000,
-    power_capacity_mw: 750,
-    charge_efficiency: 0.94,
-    discharge_efficiency: 0.94,
-    min_soc: 0.10,
-    max_soc: 0.90,
-    initial_soc: 0.10,
-    degradation_cost_per_mwh: 1.5,
-  });
+function parseJson(text: string): ParseResult {
+  try {
+    const value: unknown = JSON.parse(text);
+    return parseDraft(value);
+  } catch {
+    return { ok: false, issues: [{ field: '', message: 'Enter valid JSON before applying or submitting the request.' }] };
+  }
+}
 
-  // Strategy state
-  const [strategyName, setStrategyName] = useState('schedule');
-  const [strategyParams, setStrategyParams] = useState<Record<string, StrategyParamValue>>({
-    charge_start: '10:00',
-    discharge_start: '17:00',
-  });
-
-  // Options state
-  const [limitIntervals, setLimitIntervals] = useState(0);
-  const [includeLedger, setIncludeLedger] = useState(true); // Default to true for charts
-
-  // Fetch batteries and strategies
-  const { data: batteries = [], error: batteriesError, isLoading: batteriesLoading } = useQuery<BatteryInfo[], Error>({
-    queryKey: ['batteries'],
-    queryFn: async () => {
-      console.log('Fetching batteries...');
-      try {
-        const result = await apiService.getBatteries();
-        console.log('Batteries fetched successfully:', result);
-        return result;
-      } catch (error) {
-        console.error('Failed to fetch batteries:', error);
-        throw error;
-      }
-    },
-    retry: 2,
-  });
-
-  const { data: strategies = [], error: strategiesError, isLoading: strategiesLoading } = useQuery<StrategyInfo[], Error>({
-    queryKey: ['strategies'],
-    queryFn: async () => {
-      console.log('Fetching strategies...');
-      try {
-        const result = await apiService.getStrategies();
-        console.log('Strategies fetched successfully:', result);
-        return result;
-      } catch (error) {
-        console.error('Failed to fetch strategies:', error);
-        throw error;
-      }
-    },
-    retry: 2,
-  });
-
-  const { data: locations = [] } = useQuery({
-    queryKey: ['locations', datasetId],
-    queryFn: () => apiService.getLocations(datasetId),
-    enabled: !!datasetId,
-  });
-
-  // Get current strategy info
-  const currentStrategy = strategies.find((s: StrategyInfo) => s.name === strategyName);
-
-  // Update strategy params when strategy changes
+export function BacktestForm({ onSubmit, isLoading = false }: BacktestFormProps) {
+  const { apiKey, setApiKey } = useApiKey();
+  const [draft, setDraft] = useState<RequestDraft>(initialDraft);
+  const [mode, setMode] = useState<'form' | 'json'>('form');
+  const [edits, setEdits] = useState<FormEdits>({});
+  const [jsonText, setJsonText] = useState(() => serializeDraft(draft));
+  const [issues, setIssues] = useState<FieldIssue[]>([]);
+  const [notice, setNotice] = useState('');
+  const errorSummary = useRef<HTMLDivElement>(null);
+  const shouldFocusErrors = useRef(false);
   useEffect(() => {
-    if (currentStrategy) {
-      const defaults: Record<string, StrategyParamValue> = {};
-      currentStrategy.parameters.forEach((param) => {
-        if (param.default !== undefined) {
-          defaults[param.name] = param.default;
-        }
-      });
-      setStrategyParams(defaults);
-    }
-  }, [currentStrategy]);
+    if (shouldFocusErrors.current) errorSummary.current?.focus();
+    shouldFocusErrors.current = false;
+  }, [issues]);
 
-  // Validate date range: end not in future, and (end - start) <= 2 months
-  const validateDateRange = (start: string, end: string): string | null => {
-    const startParsed = new Date(start);
-    const endParsed = new Date(end);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    endParsed.setHours(0, 0, 0, 0);
-    if (isNaN(endParsed.getTime())) return 'Invalid end date';
-    if (endParsed > today) return 'End date cannot be in the future';
-    if (isNaN(startParsed.getTime())) return 'Invalid start date';
-    if (startParsed > endParsed) return 'Start date must be on or before end date';
-    const daysDiff = Math.round((endParsed.getTime() - startParsed.getTime()) / (1000 * 60 * 60 * 24));
-    const maxDays = 60; // 2 months
-    if (daysDiff > maxDays) return `Time range must be 2 months or less (currently ${daysDiff} days)`;
-    return null;
-  };
+  const batteries = useQuery({ queryKey: ['batteries'], queryFn: apiService.getBatteries });
+  const strategies = useQuery({ queryKey: ['strategies'], queryFn: apiService.getStrategies });
+  const datasets = useQuery({ queryKey: ['datasets'], queryFn: apiService.getDatasets });
+  const locations = useQuery({ queryKey: ['locations', draft.data_source.dataset_id], queryFn: () => apiService.getLocations(draft.data_source.dataset_id) });
 
-  // Build request object from form state (keyOverride: use when submitting so we get latest key)
-  const buildRequest = useCallback((keyOverride?: string): BacktestRequest => {
-    const key = keyOverride ?? apiKey;
-    return {
-      api_key: key,
-      data_source: {
-        type: 'gridstatus',
-        dataset_id: datasetId,
-        location_id: locationId,
-        start_date: startDate,
-        end_date: endDate,
-        timezone: timezone || 'market',
-      },
-      config: {
-        ...(useBatteryPreset && batteryFile ? { battery_file: batteryFile } : {}),
-        ...(!useBatteryPreset ? {
-          battery: {
-            energy_capacity_mwh: customBattery.energy_capacity_mwh,
-            power_capacity_mw: customBattery.power_capacity_mw,
-            charge_efficiency: customBattery.charge_efficiency,
-            discharge_efficiency: customBattery.discharge_efficiency,
-            min_soc: customBattery.min_soc,
-            max_soc: customBattery.max_soc,
-            initial_soc: customBattery.initial_soc,
-            degradation_cost_per_mwh: customBattery.degradation_cost_per_mwh,
-          },
-        } : {}),
-        strategy: {
-          name: strategyName,
-          params: strategyParams,
-        },
-      },
-      options: {
-        ...(limitIntervals > 0 ? { limit_intervals: limitIntervals } : {}),
-        include_ledger: includeLedger,
-      },
-    };
-  }, [
-    apiKey, datasetId, locationId, startDate, endDate, timezone,
-    useBatteryPreset, batteryFile, customBattery,
-    strategyName, strategyParams,
-    limitIntervals, includeLedger,
-  ]);
+  const candidate = mode === 'form' ? parseFormEdits(draft, edits) : parseJson(jsonText);
 
-  // Track if we're updating from JSON to prevent loops
-  const [isUpdatingFromJson, setIsUpdatingFromJson] = useState(false);
+  function showIssues(next: FieldIssue[], focus = false) {
+    shouldFocusErrors.current = focus;
+    setIssues(next);
+    setNotice('');
+  }
 
-  // Build request with placeholder API key for JSON preview
-  const buildRequestForPreview = useCallback((): BacktestRequest => {
-    const request = buildRequest();
-    // Replace actual API key with placeholder for display
-    return {
-      ...request,
-      api_key: '{{API_KEY}}',
-    };
-  }, [buildRequest]);
+  function commit(parsed: ParseResult): boolean {
+    if (!parsed.ok) return false;
+    setDraft(parsed.draft);
+    setEdits({});
+    setJsonText(serializeDraft(parsed.draft));
+    setIssues([]);
+    if (parsed.importedApiKey !== undefined) setApiKey(parsed.importedApiKey);
+    return true;
+  }
 
-  // Update JSON text when form changes (only if in form mode and not updating from JSON)
-  useEffect(() => {
-    if (inputMode === 'form' && !isUpdatingFromJson) {
-      try {
-        const request = buildRequestForPreview();
-        const newJson = JSON.stringify(request, null, 2);
-        setJsonText(newJson);
-        setJsonError(null);
-      } catch {
-        setJsonError('Error generating JSON');
-      }
-    }
-  }, [buildRequestForPreview, inputMode, isUpdatingFromJson]);
+  function editField(field: FormField, text: string) {
+    setEdits(current => ({ ...current, [field]: text }));
+    setIssues([]);
+    setNotice('');
+  }
 
-  // Check if JSON is a compare request
-  const isCompareRequest = (obj: unknown): obj is CompareBacktestRequest => {
-    if (typeof obj !== 'object' || obj === null) return false;
-    const candidate = obj as { base_config?: unknown; variations?: unknown };
-    return Boolean(candidate.base_config) && Array.isArray(candidate.variations);
-  };
+  function commitFormOnBlur() {
+    const parsed = parseFormEdits(draft, edits);
+    if (!commit(parsed) && !parsed.ok) showIssues(parsed.issues);
+  }
 
-  // Replace API key placeholder in JSON string (keyOverride: use getApiKey() when submitting)
-  const replaceApiKeyPlaceholder = (jsonStr: string, keyOverride?: string): string => {
-    const key = keyOverride ?? apiKey;
-    if (!key) {
-      return jsonStr; // Keep placeholder if no API key
-    }
-    return jsonStr.replace(/"\{\{API_KEY\}\}"/g, JSON.stringify(key));
-  };
+  function applyAction(action: DraftAction) {
+    const parsed = parseFormEdits(draft, edits);
+    if (!parsed.ok) { showIssues(parsed.issues, true); return; }
+    commit({ ok: true, draft: applyDraftAction(parsed.draft, action) });
+    setNotice('');
+  }
 
-  // Parse JSON and update form state
-  const parseJsonToForm = (json: string) => {
-    try {
-      // First, ensure API key is set to placeholder in the JSON text
-      let normalizedJson = json;
-      // If the JSON has an actual API key, replace it with placeholder for display
-      if (apiKey && json.includes(apiKey)) {
-        normalizedJson = json.replace(new RegExp(JSON.stringify(apiKey), 'g'), '"{{API_KEY}}"');
-        setJsonText(normalizedJson);
-      }
-      
-      const parsed = JSON.parse(normalizedJson);
-      
-      // If it's a compare request, don't try to parse into form
-      if (isCompareRequest(parsed)) {
-        setJsonError(null);
-        setJsonSuccess(true);
-        setIsUpdatingFromJson(false);
-        setTimeout(() => setJsonSuccess(false), 2000);
-        return true;
-      }
-      
-      const request: BacktestRequest = parsed;
-      setJsonError(null);
-      setJsonSuccess(true);
-      setIsUpdatingFromJson(true);
-      
-      // Clear success message after 2 seconds
-      setTimeout(() => setJsonSuccess(false), 2000);
-
-      // Update data source
-      if (request.data_source) {
-        setDatasetId(request.data_source.dataset_id || '');
-        setLocationId(request.data_source.location_id || '');
-        setStartDate(request.data_source.start_date || '');
-        setEndDate(request.data_source.end_date || '');
-        setTimezone(request.data_source.timezone || 'market');
-      }
-
-      // Update battery config
-      if (request.config) {
-        if (request.config.battery_file) {
-          setUseBatteryPreset(true);
-          setBatteryFile(request.config.battery_file);
-        } else if (request.config.battery) {
-          setUseBatteryPreset(false);
-          setCustomBattery({
-            energy_capacity_mwh: request.config.battery.energy_capacity_mwh || 0,
-            power_capacity_mw: request.config.battery.power_capacity_mw || 0,
-            charge_efficiency: request.config.battery.charge_efficiency || 0,
-            discharge_efficiency: request.config.battery.discharge_efficiency || 0,
-            min_soc: request.config.battery.min_soc || 0,
-            max_soc: request.config.battery.max_soc || 0,
-            initial_soc: request.config.battery.initial_soc ?? 0,
-            degradation_cost_per_mwh: request.config.battery.degradation_cost_per_mwh ?? 0,
-          });
-        }
-
-        // Update strategy
-        if (request.config.strategy) {
-          setStrategyName(request.config.strategy.name || 'schedule');
-          setStrategyParams(request.config.strategy.params || {});
-        }
-      }
-
-      // Update options
-      if (request.options) {
-        setLimitIntervals(request.options.limit_intervals || 0);
-        setIncludeLedger(request.options.include_ledger ?? true);
-      }
-
-      // Reset flag after a short delay to allow form updates to complete
-      setTimeout(() => setIsUpdatingFromJson(false), 100);
-
-      return true;
-    } catch (err) {
-      setJsonError(getErrorMessage(err, 'Invalid JSON'));
-      setJsonSuccess(false);
-      setIsUpdatingFromJson(false);
-      return false;
-    }
-  };
-
-  // Handle JSON text changes with debouncing
-  const [jsonTimeout, setJsonTimeout] = useState<ReturnType<typeof setTimeout> | null>(null);
-  const handleJsonChange = (text: string) => {
-    setJsonText(text);
-    
-    if (inputMode === 'json') {
-      // Clear previous timeout
-      if (jsonTimeout) {
-        clearTimeout(jsonTimeout);
-      }
-
-      // Debounce parsing - wait 500ms after user stops typing
-      const timeout = setTimeout(() => {
-        parseJsonToForm(text);
-      }, 500);
-      setJsonTimeout(timeout);
-    }
-  };
-
-  // Cleanup timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (jsonTimeout) {
-        clearTimeout(jsonTimeout);
-      }
-    };
-  }, [jsonTimeout]);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const currentKey = getApiKey();
-
-    let request: BacktestRequest | CompareBacktestRequest;
-
-    if (inputMode === 'json') {
-      // Parse JSON and validate
-      try {
-        const jsonWithApiKey = replaceApiKeyPlaceholder(jsonText, currentKey);
-        const parsed = JSON.parse(jsonWithApiKey);
-
-        const hasApiKeyInJson = parsed.api_key &&
-                                parsed.api_key !== '{{API_KEY}}' &&
-                                parsed.api_key !== '' &&
-                                parsed.api_key !== null;
-
-        if (!hasApiKeyInJson) {
-          if (!currentKey) {
-            setJsonError('Missing api_key. Please enter your API key in the API key input field at the top of the page, or provide it in the JSON.');
-            return;
-          }
-          parsed.api_key = currentKey;
-        }
-
-        if (!parsed.api_key || parsed.api_key === '{{API_KEY}}' || parsed.api_key === '') {
-          setJsonError('Missing api_key. Please enter your API key in the API key input field at the top of the page, or provide it in the JSON.');
-          return;
-        }
-
-        if (isCompareRequest(parsed)) {
-          if (!parsed.data_source || !parsed.base_config || !parsed.variations) {
-            setJsonError('Missing required fields for compare request: data_source, base_config, and variations are required');
-            return;
-          }
-          request = parsed as CompareBacktestRequest;
-        } else {
-          if (!parsed.data_source || !parsed.config) {
-            setJsonError('Missing required fields: data_source and config are required');
-            return;
-          }
-          request = parsed as BacktestRequest;
-        }
-        setJsonError(null);
-      } catch (err) {
-        setJsonError(getErrorMessage(err, 'Invalid JSON'));
-        return;
-      }
+  function switchMode(nextMode: 'form' | 'json') {
+    if (nextMode === mode) return;
+    const parsed = mode === 'form' ? parseFormEdits(draft, edits) : parseJson(jsonText);
+    if (!parsed.ok) { showIssues(parsed.issues, true); return; }
+    commit(parsed);
+    if (parsed.draft.kind === 'compare') {
+      setMode('json');
+      setNotice('Comparison requests are edited as JSON.');
     } else {
-      if (!currentKey) {
-        alert('Please enter your API key in the API key input field at the top of the page');
-        return;
-      }
-      request = buildRequest(currentKey);
+      setMode(nextMode);
+      setNotice('');
     }
+  }
 
-    // Validate date range: end not in future, range <= 2 months
-    const ds = request.data_source;
-    if (ds?.start_date && ds?.end_date) {
-      const err = validateDateRange(ds.start_date, ds.end_date);
-      if (err) {
-        if (inputMode === 'json') setJsonError(err);
-        else setDateError(err);
-        return;
-      }
-    }
-    setDateError(null);
-    setJsonError(null);
-    onSubmit(request);
-  };
+  function applyJson() {
+    const parsed = parseJson(jsonText);
+    if (!parsed.ok) { showIssues(parsed.issues, true); return; }
+    commit(parsed);
+    setNotice('Request applied.');
+  }
 
+  async function submit() {
+    if (isLoading) return;
+    const parsed = mode === 'form' ? parseFormEdits(draft, edits) : parseJson(jsonText);
+    if (!parsed.ok) { showIssues(parsed.issues, true); return; }
+    commit(parsed);
+    const key = parsed.importedApiKey ?? apiKey;
+    if (!key.trim()) { showIssues([{ field: 'api_key', message: 'Enter your Grid Status API key.' }], true); return; }
+    setNotice('');
+    const submissionIssues = await onSubmit(parsed.draft, key);
+    if (submissionIssues.length > 0) showIssues(submissionIssues, true);
+  }
+
+  const fields = { edits, issues, onEdit: editField, onBlur: commitFormOnBlur };
   return (
-    <form onSubmit={handleSubmit}>
-      {/* Input Mode Toggle */}
-      <div className="card" style={{ backgroundColor: '#1a1a2a' }}>
-        <h2 style={{ marginBottom: '0.75em' }}>Input Method</h2>
-        <div style={{ display: 'flex', gap: '1em', marginBottom: '0.5em' }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5em', cursor: 'pointer' }}>
-            <input
-              type="radio"
-              checked={inputMode === 'form'}
-              onChange={() => {
-                setInputMode('form');
-                // When switching to form mode, try to parse JSON and update form if valid
-                if (jsonText) {
-                  parseJsonToForm(jsonText);
-                }
-              }}
-            />
-            Form Input
-          </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5em', cursor: 'pointer' }}>
-            <input
-              type="radio"
-              checked={inputMode === 'json'}
-              onChange={() => {
-                setInputMode('json');
-                setIsUpdatingFromJson(false);
-                // When switching to JSON mode, update JSON from current form state with placeholder
-                const request = buildRequestForPreview();
-                setJsonText(JSON.stringify(request, null, 2));
-                setJsonError(null);
-              }}
-            />
-            JSON Input
-          </label>
+    <form className="card request-editor" noValidate aria-busy={isLoading} onSubmit={event => { event.preventDefault(); void submit(); }}>
+      <h2>Backtest request</h2>
+      <fieldset>
+        <legend>Input mode</legend>
+        <div className="radio-group">
+          <label><input type="radio" name="input-mode" checked={mode === 'form'} disabled={draft.kind === 'compare'}
+            aria-describedby={draft.kind === 'compare' ? 'compare-mode-help' : undefined} onChange={() => switchMode('form')} />Form Input</label>
+          <label><input type="radio" name="input-mode" checked={mode === 'json'} onChange={() => switchMode('json')} />JSON Input</label>
         </div>
-      </div>
+        {draft.kind === 'compare' && <p id="compare-mode-help">Comparison requests stay in JSON mode to preserve all variations. Apply a single request to enable Form Input.</p>}
+      </fieldset>
 
-      {inputMode === 'json' ? (
-        <div className="card">
-          <h2>Request JSON</h2>
-          {jsonError && (
-            <div className="error" style={{ marginBottom: '0.75em' }}>
-              <strong>JSON Error:</strong> {jsonError}
-            </div>
-          )}
-          {jsonSuccess && !jsonError && (
-            <div className="success" style={{ marginBottom: '0.75em' }}>
-              ✓ JSON parsed successfully! Form inputs have been updated.
-            </div>
-          )}
-          <div className="form-group">
-            <label>Paste or edit the request JSON:</label>
-            <textarea
-              value={jsonText}
-              onChange={(e) => handleJsonChange(e.target.value)}
-              style={{
-                minHeight: '300px',
-                fontFamily: 'monospace',
-                fontSize: '0.85em',
-                whiteSpace: 'pre',
-                overflowWrap: 'normal',
-                overflowX: 'auto',
-              }}
-              placeholder='{"api_key": "...", "data_source": {...}, "config": {...}}'
-            />
-          </div>
-          <div style={{ fontSize: '0.85em', opacity: 0.7, marginTop: '0.5em' }}>
-            <p style={{ margin: '0.25em 0' }}>💡 Tip: The JSON will automatically update the form inputs when you paste or edit it (after a short delay).</p>
-            <p style={{ margin: '0.25em 0' }}>💡 Tip: Switch to "Form Input" mode to see the generated JSON from your form.</p>
-            <p style={{ margin: '0.25em 0' }}>💡 Tip: Make sure to include your API key in the JSON: <code>{`{"api_key": "your-key-here"}`}</code></p>
-          </div>
-        </div>
-      ) : (
-        <>
-          {/* Data Source Section */}
-      <div className="card">
-        <h2>Data Source</h2>
-        <div className="form-row">
-          <div className="form-group">
-            <label>Dataset ID</label>
-            <input
-              type="text"
-              value={datasetId}
-              onChange={(e) => setDatasetId(e.target.value)}
-              required
-            />
-          </div>
-          <div className="form-group">
-            <label>Location ID</label>
-            <input
-              type="text"
-              value={locationId}
-              onChange={(e) => setLocationId(e.target.value)}
-              list="locations-list"
-              required
-            />
-            <datalist id="locations-list">
-              {locations.map(loc => (
-                <option key={loc.id} value={loc.id}>{loc.name}</option>
-              ))}
-            </datalist>
-          </div>
-        </div>
-        <div className="form-row">
-          <div className="form-group">
-            <label>Start Date</label>
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => { setStartDate(e.target.value); setDateError(null); }}
-              required
-            />
-          </div>
-          <div className="form-group">
-            <label>End Date</label>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => { setEndDate(e.target.value); setDateError(null); }}
-              required
-            />
-          </div>
-          {dateError && (
-            <div className="form-group" style={{ flex: '1 1 100%', color: '#ffaaaa', fontSize: '0.9em' }}>
-              {dateError}
-            </div>
-          )}
-          <div className="form-group">
-            <label>Timezone</label>
-            <select value={timezone} onChange={(e) => setTimezone(e.target.value)}>
-              <option value="market">Market</option>
-              <option value="UTC">UTC</option>
-            </select>
-          </div>
-        </div>
-      </div>
+      {issues.length > 0 && <div id="request-errors" className="error" role="alert" tabIndex={-1} ref={errorSummary}>
+        <h3>Review the request</h3>
+        <ul>{issues.map((issue, index) => <li key={`${issue.field}-${index}`}>
+          <button type="button" className="error-link" onClick={() => {
+            const target = mode === 'json' && issue.field !== 'api_key' ? 'request-json' : fieldID(issue.field);
+            (document.getElementById(target) ?? errorSummary.current)?.focus();
+          }}>{issue.field ? `${issue.field}: ` : ''}{issue.message}</button>
+        </li>)}</ul>
+      </div>}
+      {notice && <p role="status">{notice}</p>}
+      {[batteries, strategies, datasets, locations].some(query => query.isError) &&
+        <p role="status">Some selection lists could not load. Your request is unchanged; you can still enter IDs or edit JSON.</p>}
 
-      {/* Battery Configuration */}
-      <div className="card">
-        <h2>Battery Configuration</h2>
-        <div className="form-group">
-          <label>
-            <input
-              type="radio"
-              checked={useBatteryPreset}
-              onChange={() => setUseBatteryPreset(true)}
-            />
-            Use Battery Preset
-          </label>
-          <label>
-            <input
-              type="radio"
-              checked={!useBatteryPreset}
-              onChange={() => setUseBatteryPreset(false)}
-            />
-            Custom Battery
-          </label>
-        </div>
+      {mode === 'json' ? <JsonEditor text={jsonText} onChange={text => { setJsonText(text); setIssues([]); setNotice(''); }}
+        onApply={applyJson} onDiscard={() => { setJsonText(serializeDraft(draft)); setIssues([]); setNotice('JSON edits discarded.'); }} />
+        : draft.kind === 'single' && <>
+          <DataSourceSection {...fields} source={draft.data_source} datasets={datasets.data ?? []} locations={locations.data ?? []} />
+          <BatterySection {...fields} config={draft.config} batteries={batteries.data ?? []} onAction={applyAction} />
+          <StrategySection {...fields} strategy={draft.config.strategy} strategies={strategies.data ?? []} onAction={applyAction} />
+          <OptionsSection {...fields} options={draft.options} />
+          <button type="button" onClick={() => { setEdits({}); setIssues([]); setNotice('Form edits discarded.'); }}>Discard form edits</button>
+        </>}
 
-        {useBatteryPreset ? (
-          <div className="form-group">
-            <label>Battery Preset</label>
-            {batteriesError && (
-              <div style={{ color: '#ffaaaa', fontSize: '0.85em', marginBottom: '0.5em' }}>
-                Error loading batteries: {batteriesError instanceof Error ? batteriesError.message : 'Unknown error'}
-              </div>
-            )}
-            {batteriesLoading && (
-              <div style={{ color: '#aaaaff', fontSize: '0.85em', marginBottom: '0.5em' }}>
-                Loading batteries...
-              </div>
-            )}
-            {!batteriesLoading && !batteriesError && batteries.length === 0 && (
-              <div style={{ color: '#ffaa00', fontSize: '0.85em', marginBottom: '0.5em' }}>
-                ⚠️ No batteries found. Check server logs.
-              </div>
-            )}
-            <select value={batteryFile} onChange={(e) => setBatteryFile(e.target.value)} disabled={batteriesLoading || batteries.length === 0}>
-              {batteries.length === 0 ? (
-                <option value="">No batteries available</option>
-              ) : (
-                batteries.map((batt: BatteryInfo) => (
-                  <option key={batt.id} value={batt.id}>
-                    {batt.name} ({batt.specs.energy_capacity_mwh} MWh, {batt.specs.power_capacity_mw} MW)
-                  </option>
-                ))
-              )}
-            </select>
-          </div>
-        ) : (
-          <div className="form-row">
-            <div className="form-group">
-              <label>Energy Capacity (MWh)</label>
-              <input
-                type="number"
-                step="0.1"
-                value={customBattery.energy_capacity_mwh}
-                onChange={(e) => setCustomBattery({ ...customBattery, energy_capacity_mwh: parseFloat(e.target.value) })}
-                required
-              />
-            </div>
-            <div className="form-group">
-              <label>Power Capacity (MW)</label>
-              <input
-                type="number"
-                step="0.1"
-                value={customBattery.power_capacity_mw}
-                onChange={(e) => setCustomBattery({ ...customBattery, power_capacity_mw: parseFloat(e.target.value) })}
-                required
-              />
-            </div>
-            <div className="form-group">
-              <label>Charge Efficiency</label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                max="1"
-                value={customBattery.charge_efficiency}
-                onChange={(e) => setCustomBattery({ ...customBattery, charge_efficiency: parseFloat(e.target.value) })}
-                required
-              />
-            </div>
-            <div className="form-group">
-              <label>Discharge Efficiency</label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                max="1"
-                value={customBattery.discharge_efficiency}
-                onChange={(e) => setCustomBattery({ ...customBattery, discharge_efficiency: parseFloat(e.target.value) })}
-                required
-              />
-            </div>
-            <div className="form-group">
-              <label>Min SOC</label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                max="1"
-                value={customBattery.min_soc}
-                onChange={(e) => setCustomBattery({ ...customBattery, min_soc: parseFloat(e.target.value) })}
-                required
-              />
-            </div>
-            <div className="form-group">
-              <label>Max SOC</label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                max="1"
-                value={customBattery.max_soc}
-                onChange={(e) => setCustomBattery({ ...customBattery, max_soc: parseFloat(e.target.value) })}
-                required
-              />
-            </div>
-            <div className="form-group">
-              <label>Initial SOC (optional)</label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                max="1"
-                value={customBattery.initial_soc}
-                onChange={(e) => setCustomBattery({ ...customBattery, initial_soc: parseFloat(e.target.value) })}
-              />
-            </div>
-            <div className="form-group">
-              <label>Degradation Cost per MWh</label>
-              <input
-                type="number"
-                step="0.1"
-                min="0"
-                value={customBattery.degradation_cost_per_mwh}
-                onChange={(e) => setCustomBattery({ ...customBattery, degradation_cost_per_mwh: parseFloat(e.target.value) })}
-              />
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Strategy Configuration */}
-      <div className="card">
-        <h2>Strategy Configuration</h2>
-        <div className="form-group">
-          <label>Strategy</label>
-          {strategiesError && (
-            <div style={{ color: '#ffaaaa', fontSize: '0.85em', marginBottom: '0.5em' }}>
-              Error loading strategies: {strategiesError instanceof Error ? strategiesError.message : 'Unknown error'}
-            </div>
-          )}
-          {strategiesLoading && (
-            <div style={{ color: '#aaaaff', fontSize: '0.85em', marginBottom: '0.5em' }}>
-              Loading strategies...
-            </div>
-          )}
-          {!strategiesLoading && !strategiesError && strategies.length === 0 && (
-            <div style={{ color: '#ffaa00', fontSize: '0.85em', marginBottom: '0.5em' }}>
-              ⚠️ No strategies found. Check server logs.
-            </div>
-          )}
-          <select value={strategyName} onChange={(e) => setStrategyName(e.target.value)} disabled={strategiesLoading || strategies.length === 0}>
-            {strategies.length === 0 ? (
-              <option value="">No strategies available</option>
-            ) : (
-              strategies.map((strat: StrategyInfo) => (
-                <option key={strat.name} value={strat.name}>
-                  {strat.name} - {strat.description}
-                </option>
-              ))
-            )}
-          </select>
-        </div>
-
-        {currentStrategy && (
-          <div>
-            <p style={{ opacity: 0.8, marginBottom: '0.75em', fontSize: '0.9em' }}>{currentStrategy.description}</p>
-            {currentStrategy.parameters.map((param) => (
-              <div key={param.name} className="form-group">
-                <label>
-                  {param.name}
-                  {param.default !== undefined && (
-                    <span style={{ opacity: 0.6, fontSize: '0.9em' }}> (default: {String(param.default)})</span>
-                  )}
-                </label>
-                {param.type === 'int' ? (
-                  <input
-                    type="number"
-                    value={strategyParams[param.name] ?? param.default ?? ''}
-                    onChange={(e) => setStrategyParams({ ...strategyParams, [param.name]: parseInt(e.target.value) })}
-                  />
-                ) : param.type === 'float' ? (
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={strategyParams[param.name] ?? param.default ?? ''}
-                    onChange={(e) => setStrategyParams({ ...strategyParams, [param.name]: parseFloat(e.target.value) })}
-                  />
-                ) : (
-                  <input
-                    type="text"
-                    value={strategyParams[param.name] ?? param.default ?? ''}
-                    onChange={(e) => setStrategyParams({ ...strategyParams, [param.name]: e.target.value })}
-                  />
-                )}
-                <small style={{ opacity: 0.7, display: 'block', marginTop: '0.25em' }}>
-                  {param.description}
-                </small>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Options */}
-      <div className="card">
-        <h2>Options</h2>
-        <div className="form-row">
-          <div className="form-group">
-            <label>Limit Intervals (0 = all)</label>
-            <input
-              type="number"
-              min="0"
-              value={limitIntervals}
-              onChange={(e) => setLimitIntervals(parseInt(e.target.value) || 0)}
-            />
-          </div>
-          <div className="form-group">
-            <label>
-              <input
-                type="checkbox"
-                checked={includeLedger}
-                onChange={(e) => setIncludeLedger(e.target.checked)}
-              />
-              Include Ledger (detailed interval data)
-            </label>
-          </div>
-        </div>
-      </div>
-
-          {/* JSON Preview (read-only when in form mode) */}
-          <div className="card" style={{ backgroundColor: '#0a0a0a' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4em' }}>
-              <h2 style={{ margin: 0, fontSize: '1.1em' }}>Request JSON Preview</h2>
-              <button
-                type="button"
-                onClick={() => {
-                  navigator.clipboard.writeText(jsonText);
-                  alert('JSON copied to clipboard!');
-                }}
-                style={{ padding: '0.4em 0.75em', fontSize: '0.85em' }}
-              >
-                Copy JSON
-              </button>
-            </div>
-            <div style={{ fontSize: '0.8em', opacity: 0.7, marginBottom: '0.4em' }}>
-              This JSON is automatically generated from the form above. Switch to "JSON Input" mode to edit directly.
-            </div>
-            <pre style={{
-              backgroundColor: '#0a0a0a',
-              padding: '0.75em',
-              borderRadius: '4px',
-              overflow: 'auto',
-              maxHeight: '250px',
-              fontSize: '0.8em',
-              fontFamily: 'monospace',
-              margin: 0,
-              border: '1px solid #333',
-            }}>
-              {jsonText || 'Generating...'}
-            </pre>
-          </div>
-        </>
-      )}
-
-      <button type="submit" disabled={(!apiKey && inputMode === 'form') || isLoading} style={{ width: '100%', padding: '0.75em', fontSize: '1em', marginTop: '0.5em' }}>
-        {isLoading ? 'Running Backtest...' : 'Run Backtest'}
-      </button>
+      <RequestPreview candidate={candidate} />
+      <button type="submit" className="run-request" disabled={isLoading}>{isLoading ? 'Running backtest…' : 'Run backtest'}</button>
     </form>
   );
 }

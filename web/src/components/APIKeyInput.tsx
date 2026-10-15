@@ -11,6 +11,9 @@ export function APIKeyInput() {
       <input
         id="api-key"
         type="password"
+        autoComplete="off"
+        aria-required="true"
+        aria-describedby="api-key-help"
         value={apiKey}
         onChange={(e) => setApiKey(e.target.value)}
         placeholder="Enter your Grid Status API key"
@@ -20,16 +23,10 @@ export function APIKeyInput() {
           borderColor: apiKey ? '#44ff44' : '#ff4444',
         }}
       />
-      {!apiKey && (
-        <p style={{ color: '#ffaaaa', fontSize: '0.85em', marginTop: '0.4em', marginBottom: 0 }}>
-          API key is required to run backtests
-        </p>
-      )}
-      {apiKey && (
-        <p style={{ color: '#aaffaa', fontSize: '0.85em', marginTop: '0.4em', marginBottom: 0 }}>
-          ✓ API key saved (stored locally in your browser)
-        </p>
-      )}
+      <p id="api-key-help" style={{ fontSize: '0.85em', marginTop: '0.4em', marginBottom: 0 }}>
+        {apiKey ? 'Key saved in this browser. ' : 'Enter a key to run backtests. '}
+        Requests send this key in a header; copied request JSON excludes it.
+      </p>
     </div>
   );
 }
