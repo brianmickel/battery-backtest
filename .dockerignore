@@ -57,4 +57,5 @@
 **/*_test.go
 **/*.test.ts
 **/*.test.tsx
+web/src/presentation/testFixtures.ts
 **/fixtures/**
