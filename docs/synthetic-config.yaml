@@ -1,0 +1,15 @@
+battery:
+  name: Synthetic 1 MWh
+  energy_capacity_mwh: 1
+  power_capacity_mw: 1
+  charge_efficiency: 1
+  discharge_efficiency: 1
+  min_soc: 0
+  max_soc: 1
+  initial_soc: 0
+  degradation_cost_per_mwh: 0
+strategy:
+  name: oracle
+  params:
+    soc_steps: 200
+    power_steps: 10

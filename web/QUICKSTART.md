@@ -1,60 +1,23 @@
-# Quick Start Guide
+# Interface quickstart
 
-## Prerequisites
+From the repository root, with Go 1.27.2 and Node 24 installed:
 
-- Node.js 20.19+ or 22.12+ and npm
-- Go API server running (see main README)
+```sh
+go mod download
+(cd web && npm ci && npm run build)
+go run ./internal/integration/server --listen 127.0.0.1:8080
+```
 
-## Setup
+Open `http://127.0.0.1:8080`. This local fixture server runs the real application with synthetic market data and makes no external provider requests.
 
-1. Install dependencies:
-   ```bash
-   cd web
-   npm install
-   ```
+1. Enter `synthetic-release-secret` in **Grid Status API Key**.
+2. Select **JSON Input** and paste [sample_request.json](../sample_request.json).
+3. Select **Apply JSON**, then **Run backtest**.
+4. Confirm $90 total PNL, two intervals, and empty final inventory. The charts show 1 MW charging followed by 1 MW discharging.
+5. Import [compare-request.json](../testdata/compare-request.json) to compare idle at explicit zero with the oracle. Results retain that order and show $0 and $90.
 
-2. Start the API server (in project root):
-   ```bash
-   go run ./cmd/api
-   ```
+The form preserves raw edits until the entire candidate is valid. Incomplete numbers, invalid date ranges, or inconsistent SOC bounds keep the text visible and block submission/copy. Correct them together or choose **Discard form edits**. JSON edits require **Apply JSON**; invalid JSON remains editable. Comparison requests remain in JSON mode. Error links focus the associated form field when available.
 
-3. Start the frontend dev server:
-   ```bash
-   npm run dev
-   ```
+The result view reports initial/final energy, cash-flow assumptions, coverage and gaps, contiguous charging/discharging windows, and explicit market/UTC time. Chart power is an average over fixed 30-minute buckets. **Copy request JSON** excludes credentials; **Copy response JSON** copies the result.
 
-4. Open http://localhost:5173 in your browser
-
-## First Steps
-
-1. **Enter your API Key**: 
-   - Get your Grid Status API key from https://gridstatus.io
-   - Enter it in the API key input field at the top
-   - It will be saved in your browser's localStorage
-
-2. **Configure Backtest**:
-   - Select or enter dataset ID (e.g., "caiso_lmp_real_time_5_min")
-   - Enter location ID (e.g., "TH_NP15_GEN-APND")
-   - Choose date range
-   - Select battery preset or configure custom battery
-   - Choose strategy and configure parameters
-   - Enable "Include Ledger" to see charts (recommended)
-
-3. **Run Backtest**:
-   - Click "Run Backtest"
-   - Wait for results (may take a few seconds)
-
-4. **View Results**:
-   - Large summary metrics at the top
-   - Per-day charge/discharge windows
-   - Charge/Discharge bar chart (30-minute intervals)
-   - Cumulative P&L line chart
-   - Full JSON response viewer
-
-## Features
-
-- **API Key Management**: Stored locally, never sent to server except in API requests
-- **Dynamic Forms**: Strategy parameters change based on selected strategy
-- **Interactive Charts**: Hover for details, zoom, pan
-- **JSON Viewer**: Expand/collapse, copy to clipboard
-- **Responsive Design**: Works on desktop and mobile
+To use Grid Status, stop the synthetic server and run `go run ./cmd/api`, then use your real key and authorized dataset/location/date range. External provider access is separate from the verified synthetic walkthrough.
