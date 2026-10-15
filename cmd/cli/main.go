@@ -47,26 +47,31 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	}
 }
 
-func flags(name string, stdout io.Writer) *flag.FlagSet {
-	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+func parseFlags(fs *flag.FlagSet, args []string, stdout io.Writer) error {
 	fs.SetOutput(io.Discard)
-	fs.Usage = func() {
-		fmt.Fprintf(stdout, "usage: cli %s [options]\n", name)
-		fs.SetOutput(stdout)
-		fs.PrintDefaults()
-		fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
+	err := fs.Parse(args)
+	if !errors.Is(err, flag.ErrHelp) {
+		return err
 	}
-	return fs
+	var defaults strings.Builder
+	fs.SetOutput(&defaults)
+	fs.PrintDefaults()
+	fs.SetOutput(io.Discard)
+	if _, err := fmt.Fprintf(stdout, "usage: cli %s [options]\n%s", fs.Name(), defaults.String()); err != nil {
+		return err
+	}
+	return flag.ErrHelp
 }
 
 func runBacktest(ctx context.Context, args []string, stdout io.Writer) error {
-	fs := flags("backtest", stdout)
+	fs := flag.NewFlagSet("backtest", flag.ContinueOnError)
 	dataPath := fs.String("data", "sample_data.json", "Path to Grid Status JSON response")
 	configPath := fs.String("config", "", "Required YAML configuration path")
 	outPath := fs.String("out", "results/dispatch.csv", "Output CSV path")
 	count := fs.Int("n", 0, "Chronological interval limit (0=all)")
 	clock := fs.String("timezone", "market", "Schedule/display clock: market or UTC")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args, stdout); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
@@ -119,9 +124,9 @@ func runBacktest(ctx context.Context, args []string, stdout io.Writer) error {
 }
 
 func runRank(ctx context.Context, args []string, stdout io.Writer) error {
-	fs := flags("rank", stdout)
+	fs := flag.NewFlagSet("rank", flag.ContinueOnError)
 	dataPaths := fs.String("data", "sample_data.json", "Comma-separated JSON paths or directories")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args, stdout); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}

@@ -92,7 +92,7 @@ func readLedger(t *testing.T, path string) []backtest.LedgerRow {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	records, err := csv.NewReader(file).ReadAll()
 	if err != nil {
 		t.Fatal(err)

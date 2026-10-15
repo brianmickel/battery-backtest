@@ -34,7 +34,7 @@ func TestCLITerminationSignalCancelsWorkWithNonzeroExit(t *testing.T) {
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer command.Process.Kill()
+	defer func() { _ = command.Process.Kill() }()
 	// Opening the writer completes only when the command has reached LoadFile,
 	// after main installed signal cancellation. No sleep selects the signal timing.
 	type opened struct {
@@ -53,11 +53,11 @@ func TestCLITerminationSignalCancelsWorkWithNonzeroExit(t *testing.T) {
 	case <-ctx.Done():
 		unblock, _ := os.OpenFile(fifo, os.O_RDWR|syscall.O_NONBLOCK, 0600)
 		if unblock != nil {
-			defer unblock.Close()
+			defer func() { _ = unblock.Close() }()
 		}
 		t.Fatal("command did not reach configuration read")
 	}
-	defer writer.Close()
+	defer func() { _ = writer.Close() }()
 	if err := command.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
