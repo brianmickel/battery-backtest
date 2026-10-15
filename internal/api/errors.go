@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"net/url"
 	"strings"
 
 	"battery-backtest/internal/api/models"
@@ -76,8 +77,12 @@ func writeFailure(c *gin.Context, err error) {
 }
 
 func requiredKey(c *gin.Context) (string, error) {
-	if _, present := c.Request.URL.Query()["api_key"]; present {
+	values, err := url.ParseQuery(c.Request.URL.RawQuery)
+	if _, present := values["api_key"]; present {
 		return "", invalid("api_key", "Move the API key from the query to X-GridStatus-API-Key.")
+	}
+	if err != nil {
+		return "", invalid("", "Invalid query parameters. Provide the API key only in X-GridStatus-API-Key.")
 	}
 	key := c.GetHeader("X-GridStatus-API-Key")
 	if strings.TrimSpace(key) == "" {

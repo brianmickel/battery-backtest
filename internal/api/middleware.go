@@ -12,10 +12,13 @@ import (
 var expensivePermit = make(chan struct{}, 1)
 
 func admit(c *gin.Context) (context.Context, func(), bool) {
+	if err := c.Request.Context().Err(); err != nil {
+		writeFailure(c, err)
+		return nil, nil, false
+	}
 	select {
 	case expensivePermit <- struct{}{}:
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
-		return ctx, func() { cancel(); <-expensivePermit }, true
+		return c.Request.Context(), func() { <-expensivePermit }, true
 	default:
 		writeFailure(c, failure{status: 503, code: "SERVER_BUSY", message: "Another experiment is running. Try again shortly.", retry: "1"})
 		return nil, nil, false
@@ -25,6 +28,9 @@ func admit(c *gin.Context) (context.Context, func(), bool) {
 func accessAndRecovery() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+		defer cancel()
+		c.Request = c.Request.WithContext(ctx)
 		defer func() {
 			if recover() != nil {
 				writeFailure(c, failure{status: 500, code: "INTERNAL_ERROR", message: "The operation could not be completed."})

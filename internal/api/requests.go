@@ -1,11 +1,10 @@
 package api
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"time"
 
@@ -54,52 +53,7 @@ func decodeBody(c *gin.Context, target any) error {
 	if err != nil {
 		return invalid("", "Could not read the request body.")
 	}
-	var boundary map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &boundary); err != nil || boundary == nil {
-		return invalid("", "Expected a JSON object.")
-	}
-	if _, legacy := boundary["api_key"]; legacy {
-		return invalid("api_key", "Move the API key from JSON to X-GridStatus-API-Key.")
-	}
-	var values any
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	if err := decoder.Decode(&values); err != nil {
-		return invalid("", "Invalid JSON.")
-	}
-	if hasNull(values) {
-		return invalid("", "Null values are not allowed; omit optional fields.")
-	}
-	decoder = json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		var configError *config.ValidationError
-		if errors.As(err, &configError) {
-			return err
-		}
-		return invalid("", "Invalid request fields or types.")
-	}
-	return nil
-}
-
-func hasNull(value any) bool {
-	switch value := value.(type) {
-	case nil:
-		return true
-	case map[string]any:
-		for _, child := range value {
-			if hasNull(child) {
-				return true
-			}
-		}
-	case []any:
-		for _, child := range value {
-			if hasNull(child) {
-				return true
-			}
-		}
-	}
-	return false
+	return decodeRequest(raw, reflect.ValueOf(target).Elem())
 }
 
 func sourceQuery(source *sourceRequest) (data.Query, error) {

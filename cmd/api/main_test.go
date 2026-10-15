@@ -31,7 +31,9 @@ func TestServerTimeoutsAndShutdownCancelActiveWork(t *testing.T) {
 		response, err := http.Get("http://" + listener.Addr().String())
 		if err == nil {
 			_, _ = io.Copy(io.Discard, response.Body)
-			response.Body.Close()
+			if err := response.Body.Close(); err != nil {
+				t.Errorf("close response: %v", err)
+			}
 		}
 	}()
 	select {
