@@ -77,24 +77,20 @@ func optimizeDP(ctx context.Context, rows []model.LMPInterval, p model.BatteryPa
 	grid, initialIndex := socGrid(p, initial, cfg.SOCSteps)
 	n := len(grid)
 	dp, next := make([]float64, n), make([]float64, n)
-	for i := range dp {
-		dp[i] = math.Inf(-1)
-	}
-	dp[initialIndex] = 0
-	previous := make([]uint16, len(rows)*n)
+	targets := make([]uint16, len(rows)*n)
 	powers := make([]float64, len(rows)*n)
 	var candidates uint64
-	for t, row := range rows {
+	// All terminal inventories have zero liquidation value. Working backward
+	// breaks profit ties on the current action, including earlier idle choices.
+	for t := len(rows) - 1; t >= 0; t-- {
+		row := rows[t]
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		for i := range next {
 			next[i] = math.Inf(-1)
 		}
-		for source, value := range dp {
-			if math.IsInf(value, -1) {
-				continue
-			}
+		for source := range grid {
 			lastTarget := -1
 			for k := -cfg.PowerSteps; k <= cfg.PowerSteps; k++ {
 				candidates++
@@ -111,30 +107,25 @@ func optimizeDP(ctx context.Context, rows []model.LMPInterval, p model.BatteryPa
 					continue
 				}
 				lastTarget = target
-				candidate := value + result.PNL
+				candidate := result.PNL + dp[target]
 				if math.IsNaN(candidate) || math.IsInf(candidate, 1) {
 					return nil, fmt.Errorf("oracle value exceeds finite numeric range")
 				}
-				index := t*n + target
-				if candidate > next[target] || candidate == next[target] && (math.Abs(result.PowerMW) < math.Abs(powers[index]) || math.Abs(result.PowerMW) == math.Abs(powers[index]) && source < int(previous[index])) {
-					next[target] = candidate
-					previous[index] = uint16(source)
+				index := t*n + source
+				if candidate > next[source] || candidate == next[source] && (math.Abs(result.PowerMW) < math.Abs(powers[index]) || math.Abs(result.PowerMW) == math.Abs(powers[index]) && target < int(targets[index])) {
+					next[source] = candidate
+					targets[index] = uint16(target)
 					powers[index] = result.PowerMW
 				}
 			}
 		}
 		dp, next = next, dp
 	}
-	best := 0
-	for i := 1; i < n; i++ {
-		if dp[i] > dp[best] || dp[i] == dp[best] && math.Abs(powers[(len(rows)-1)*n+i]) < math.Abs(powers[(len(rows)-1)*n+best]) {
-			best = i
-		}
-	}
 	plan := make([]model.Dispatch, len(rows))
-	for t := len(rows) - 1; t >= 0; t-- {
-		plan[t] = model.Dispatch{PowerMW: powers[t*n+best]}
-		best = int(previous[t*n+best])
+	state := initialIndex
+	for t := range rows {
+		plan[t] = model.Dispatch{PowerMW: powers[t*n+state]}
+		state = int(targets[t*n+state])
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err

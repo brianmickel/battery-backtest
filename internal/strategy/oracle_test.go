@@ -264,9 +264,17 @@ func BenchmarkOracle(b *testing.B) {
 }
 
 func TestOracleEqualValuesPreferSmallerPower(t *testing.T) {
-	plan, _ := buildOracle(t, hourlyIntervals([]float64{0}), idealParams(), .371, config.OracleConfig{SOCSteps: 4, PowerSteps: 2})
-	if plan.plan[0].PowerMW != 0 {
-		t.Fatalf("equal-value choice did not prefer idle: %+v", plan.plan)
+	for _, prices := range [][]float64{{0}, {0, 0}, {0, 0, 0}} {
+		plan, battery := buildOracle(t, hourlyIntervals(prices), idealParams(), .371, config.OracleConfig{SOCSteps: 4, PowerSteps: 2})
+		for _, dispatch := range plan.plan {
+			if dispatch.PowerMW != 0 {
+				t.Fatalf("equal-value horizon %v did not prefer idle: %+v", prices, plan.plan)
+			}
+		}
+		replay(t, hourlyIntervals(prices), plan, battery)
+		if battery.State.SOC != .371 {
+			t.Fatalf("idle horizon changed inventory: %v", battery.State.SOC)
+		}
 	}
 }
 
