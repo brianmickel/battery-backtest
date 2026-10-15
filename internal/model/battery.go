@@ -153,6 +153,11 @@ func SimulateInterval(params BatteryParams, state BatteryState, lmp float64, dis
 	if !finiteBatteryValue(storedDelta) || !finiteBatteryValue(result.ThroughputMWh) || !finiteBatteryValue(result.PowerMW) || !finiteBatteryValue(result.PNL) {
 		return state, IntervalResult{}, errors.New("battery interval exceeds finite numeric range")
 	}
+	actualStoredDelta := (next.SOC - state.SOC) * params.EnergyCapacityMWh
+	tolerance := math.Max(1e-9, 1e-9*math.Max(math.Abs(actualStoredDelta), math.Abs(storedDelta)))
+	if math.Abs(actualStoredDelta-storedDelta) > tolerance {
+		return state, IntervalResult{}, errors.New("battery interval cannot represent conserved energy within numeric tolerance")
+	}
 	return next, result, nil
 }
 

@@ -85,6 +85,54 @@ func TestSimulateIntervalFailureRetainsInput(t *testing.T) {
 	}
 }
 
+func TestSimulateIntervalRejectsUnrepresentableEnergyTransfer(t *testing.T) {
+	params := BatteryParams{EnergyCapacityMWh: 1e12, PowerCapacityMW: 1,
+		ChargeEfficiency: 1, DischargeEfficiency: 1, MaxSOC: 1}
+	initial := BatteryState{SOC: .5}
+	for _, power := range []float64{-1, 1} {
+		battery, err := NewBattery(params, initial.SOC)
+		if err != nil {
+			t.Fatal(err)
+		}
+		next, result, err := SimulateInterval(params, initial, 10, Dispatch{PowerMW: power}, 1)
+		if err == nil || next != initial || result != (IntervalResult{}) {
+			t.Errorf("power %v: unrepresentable transfer must fail without a result or state change: next=%+v result=%+v err=%v", power, next, result, err)
+		}
+		actual, err := battery.ApplyDispatch(10, Dispatch{PowerMW: power}, 1)
+		if err == nil || battery.State != initial || actual != (IntervalResult{}) {
+			t.Errorf("power %v: mutable dispatch committed an unrepresentable transfer: state=%+v result=%+v err=%v", power, battery.State, actual, err)
+		}
+	}
+}
+
+func TestSimulateIntervalLargeRepresentableTransfer(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		initialSOC float64
+		power      float64
+	}{
+		{"exact small transfer", 0, 1},
+		{"within relative tolerance", .5, 1e6},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			params := BatteryParams{EnergyCapacityMWh: 1e12, PowerCapacityMW: tc.power,
+				ChargeEfficiency: 1, DischargeEfficiency: 1, MaxSOC: 1}
+			state := BatteryState{SOC: tc.initialSOC}
+			for _, power := range []float64{-tc.power, tc.power} {
+				dispatch := Dispatch{PowerMW: power}
+				next, result, err := SimulateInterval(params, state, 10, dispatch, 1)
+				if err != nil {
+					t.Fatalf("large but representable transition rejected: %v", err)
+				}
+				assertConserved(t, params, state, next, 10, dispatch, 1, result)
+				assertNear(t, "realized power", result.PowerMW, power)
+				state = next
+			}
+			assertNear(t, "round trip SOC", state.SOC, tc.initialSOC)
+		})
+	}
+}
+
 func FuzzSimulateIntervalConservation(f *testing.F) {
 	f.Add([]byte{255, 255, 255, 255, 255, 0, 255, 128, 0, 128, 255, 255, 0, 255})
 	f.Add([]byte{100, 0, 255, 128, 64, 128, 0, 0, 3, 127, 0, 1, 128, 0})
