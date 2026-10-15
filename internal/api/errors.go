@@ -68,6 +68,7 @@ func writeFailure(c *gin.Context, err error) {
 		return
 	}
 	result := classify(err)
+	c.Set("error_code", result.code)
 	if result.retry != "" {
 		c.Header("Retry-After", result.retry)
 	}

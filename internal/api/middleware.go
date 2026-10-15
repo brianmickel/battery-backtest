@@ -33,7 +33,7 @@ func accessAndRecovery() gin.HandlerFunc {
 			if route == "" {
 				route = "unmatched"
 			}
-			log.Printf("method=%s path=%s status=%d elapsed=%s", c.Request.Method, route, c.Writer.Status(), time.Since(start))
+			log.Printf("method=%s path=%s status=%d error_code=%s elapsed=%s", c.Request.Method, route, c.Writer.Status(), c.GetString("error_code"), time.Since(start))
 		}()
 		c.Next()
 	}
