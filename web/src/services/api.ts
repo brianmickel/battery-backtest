@@ -17,51 +17,8 @@ console.log('API Base URL:', API_BASE_URL || '(relative - same origin)');
 console.log('Environment:', import.meta.env.MODE);
 console.log('Production:', import.meta.env.PROD);
 
-export interface DataSourceConfig {
-  type: string;
-  dataset_id: string;
-  location_id: string;
-  start_date: string;
-  end_date: string;
-  timezone?: string;
-}
-
-export interface BatteryConfig {
-  name?: string;
-  energy_capacity_mwh: number;
-  power_capacity_mw: number;
-  charge_efficiency: number;
-  discharge_efficiency: number;
-  min_soc: number;
-  max_soc: number;
-  initial_soc?: number;
-  degradation_cost_per_mwh?: number;
-}
-
-export type StrategyParamValue = string | number;
-
-export interface StrategyConfig {
-  name: string;
-  params?: Record<string, StrategyParamValue>;
-}
-
-export interface BacktestConfig {
-  battery_file?: string;
-  battery?: BatteryConfig;
-  strategy: StrategyConfig;
-}
-
-export interface BacktestOptions {
-  limit_intervals?: number;
-  include_ledger?: boolean;
-}
-
-export interface BacktestRequest {
-  api_key: string;
-  data_source: DataSourceConfig;
-  config: BacktestConfig;
-  options?: BacktestOptions;
-}
+export type { DataSourceConfig, BatteryConfig, StrategyConfig, StrategyParamValue, BacktestConfig, BacktestOptions, BacktestRequest, CompareBacktestRequest } from '../domain/types';
+import type { BacktestRequest, CompareBacktestRequest, StrategyParamValue } from '../domain/types';
 
 export interface TimeWindow {
   start: string;
@@ -80,6 +37,13 @@ export interface DischargeWindow extends TimeWindow {
 
 export interface BacktestSummary {
   total_pnl: number;
+  initial_soc: number;
+  initial_energy_mwh: number;
+  final_energy_mwh: number;
+  timezone: "market" | "UTC";
+  covered_duration_hours: number;
+  gap_duration_hours: number;
+  gap_count: number;
   final_soc: number;
   total_intervals: number;
   backtest_window: TimeWindow;
@@ -119,7 +83,6 @@ export interface BacktestResponse {
 export interface BatteryInfo {
   id: string;
   name: string;
-  file: string;
   specs: {
     energy_capacity_mwh: number;
     power_capacity_mw: number;
@@ -134,6 +97,7 @@ export interface StrategyInfo {
     type: string;
     description: string;
     default?: StrategyParamValue;
+    default_source?: string;
   }>;
 }
 
@@ -159,16 +123,6 @@ export interface Ranking {
   min_lmp: number;
   max_lmp: number;
   oracle_profit: number;
-}
-
-export interface CompareBacktestRequest {
-  api_key: string;
-  data_source: DataSourceConfig;
-  base_config: BacktestConfig;
-  variations: Array<{
-    name: string;
-    config: BacktestConfig;
-  }>;
 }
 
 export interface ComparisonResult {
