@@ -46,3 +46,13 @@ sample_data*.json
 
 # Docker
 .docker/
+
+# Agent outputs and updater coordination
+.agent-outputs/
+*.lock
+.battery-backtest-*
+
+# Browser test artifacts
+web/test-results/
+web/playwright-report/
+web/coverage/

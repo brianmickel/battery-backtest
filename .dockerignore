@@ -1,49 +1,60 @@
-# Git
-.git
-.gitignore
+# Build inputs only; exclude local outputs and credential files.
+**
+!go.mod
+!go.sum
+!cmd/
+!cmd/**
+!internal/
+!internal/**
+!web/
+!web/**
+!examples/
+!examples/batteries/
+!examples/batteries/*.yaml
+!data/
+!data/locations.json
 
-# Documentation
-*.md
-!README.md
-
-# Development files
-.env
-.env.local
-*.log
-
-# IDE
-.vscode
-.idea
-*.swp
-*.swo
-
-# Node modules (will be installed in container)
-web/node_modules
-web/dist
-
-# Go build artifacts
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-api-server
-
-# Test files
-*_test.go
-
-# Sample data (optional - remove if you want to include)
-sample_data.json
-sample_data2.json
-
-# Development cache
-DEVELOPMENT_CACHE.md
-IMPLEMENTATION_STATUS.md
-API_UI_PLAN.md
-API_KEY_HANDLING.md
-API_DOCUMENTATION.md
-README_LOCATIONS.md
-
-# Scripts (optional - remove if needed)
-scripts/
-run.py
+**/.agent-outputs
+**/.agent-outputs/**
+**/.git
+**/.git/**
+**/node_modules
+**/node_modules/**
+**/dist
+**/dist/**
+**/.vite
+**/.vite/**
+**/test-results
+**/test-results/**
+**/playwright-report
+**/playwright-report/**
+**/coverage
+**/coverage/**
+**/*.log
+**/*.out
+**/*.test
+**/*.tsbuildinfo
+**/.DS_Store
+**/.aws
+**/.aws/**
+**/.ssh
+**/.ssh/**
+**/.npmrc
+**/.netrc
+**/logs
+**/logs/**
+**/.env
+**/.env.*
+**/*.env
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/credentials*
+**/secrets*
+**/*.lock
+**/.battery-backtest-*
+**/*_test.go
+**/*.test.ts
+**/*.test.tsx
+**/fixtures/**
