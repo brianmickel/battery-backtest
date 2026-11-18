@@ -1,0 +1,44 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      go-modules:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: monthly
+    groups:
+      npm-dependencies:
+        patterns: ["*"]
+    ignore:
+      # typescript-eslint does not support TypeScript 7 yet
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      # tracks the Node major in .nvmrc; bump together with Node
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      docker-images:
+        patterns: ["*"]
+    ignore:
+      # stay on Node LTS; move the major by hand
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      github-actions:
+        patterns: ["*"]

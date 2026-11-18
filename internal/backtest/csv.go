@@ -2,20 +2,28 @@ package backtest
 
 import (
 	"encoding/csv"
+	"errors"
+	"io"
 	"os"
 	"strconv"
 	"time"
 )
 
 func WriteLedgerCSV(path string, ledger []LedgerRow) error {
-	f, err := os.Create(path)
+	file, err := os.Create(path)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	return writeLedgerCSVAndClose(file, ledger)
+}
 
-	w := csv.NewWriter(f)
-	defer w.Flush()
+func writeLedgerCSVAndClose(writer io.WriteCloser, ledger []LedgerRow) error {
+	writeErr := writeLedgerCSV(writer, ledger)
+	return errors.Join(writeErr, writer.Close())
+}
+
+func writeLedgerCSV(writer io.Writer, ledger []LedgerRow) error {
+	w := csv.NewWriter(writer)
 
 	header := []string{
 		"index",
@@ -67,6 +75,7 @@ func WriteLedgerCSV(path string, ledger []LedgerRow) error {
 		}
 	}
 
+	w.Flush()
 	return w.Error()
 }
 
@@ -74,10 +83,9 @@ func fmtTime(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.Format(time.RFC3339)
+	return t.Format(time.RFC3339Nano)
 }
 
 func fmtFloat(x float64) string {
 	return strconv.FormatFloat(x, 'f', 6, 64)
 }
-

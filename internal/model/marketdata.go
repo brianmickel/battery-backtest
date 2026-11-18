@@ -5,10 +5,11 @@ import "time"
 // GridStatusLMPResponse matches the JSON shape of sample_data.json.
 //
 // Example:
-// {
-//   "status_code": 200,
-//   "data": [ ... ]
-// }
+//
+//	{
+//	  "status_code": 200,
+//	  "data": [ ... ]
+//	}
 type GridStatusLMPResponse struct {
 	StatusCode int           `json:"status_code"`
 	Data       []LMPInterval `json:"data"`
@@ -45,4 +46,3 @@ func (i LMPInterval) Duration() time.Duration {
 func (i LMPInterval) DurationHours() float64 {
 	return i.Duration().Hours()
 }
-

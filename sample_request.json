@@ -1,29 +1,33 @@
 {
-  "api_key": "{{API_KEY}}",
   "data_source": {
     "type": "gridstatus",
-    "dataset_id": "caiso_lmp_real_time_5_min",
-    "location_id": "SV_LNODER6A",
-    "start_date": "2026-01-18",
-    "end_date": "2026-01-19",
-    "timezone": "market"
+    "dataset_id": "synthetic_lmp",
+    "location_id": "TEST_NODE",
+    "start_date": "2024-01-01",
+    "end_date": "2024-01-02",
+    "timezone": "UTC"
   },
   "config": {
-    "battery_file": "0_flagstaff_theoretical",
+    "battery": {
+      "name": "Synthetic 1 MWh",
+      "energy_capacity_mwh": 1,
+      "power_capacity_mw": 1,
+      "charge_efficiency": 1,
+      "discharge_efficiency": 1,
+      "min_soc": 0,
+      "max_soc": 1,
+      "initial_soc": 0,
+      "degradation_cost_per_mwh": 0
+    },
     "strategy": {
-      "name": "schedule",
+      "name": "oracle",
       "params": {
-        "charge_start": "11:00",
-        "charge_end": "15:00",
-        "discharge_start": "16:00",
-        "discharge_end": "23:59",
-        "charge_power_mw": 100.0,
-        "discharge_power_mw": 100.0
+        "soc_steps": 200,
+        "power_steps": 10
       }
     }
   },
   "options": {
-    "limit_intervals": 0,
-    "include_ledger": false
+    "include_ledger": true
   }
 }

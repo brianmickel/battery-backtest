@@ -5,6 +5,10 @@ import (
 	"math"
 )
 
+// ErrUnrepresentableEnergy identifies a transfer that cannot conserve stored energy
+// within the model's numerical tolerance.
+var ErrUnrepresentableEnergy = errors.New("battery interval cannot represent conserved energy within numeric tolerance")
+
 // BatteryParams defines the physical and economic parameters of the battery.
 // Units:
 // - EnergyCapacityMWh: MWh
@@ -13,13 +17,13 @@ import (
 // - SOC: fraction 0..1
 // - DegradationCostPerMWh: $/MWh throughput (charge + discharge)
 type BatteryParams struct {
-	EnergyCapacityMWh      float64
-	PowerCapacityMW        float64
-	ChargeEfficiency       float64
-	DischargeEfficiency    float64
-	MinSOC                 float64
-	MaxSOC                 float64
-	DegradationCostPerMWh  float64
+	EnergyCapacityMWh     float64
+	PowerCapacityMW       float64
+	ChargeEfficiency      float64
+	DischargeEfficiency   float64
+	MinSOC                float64
+	MaxSOC                float64
+	DegradationCostPerMWh float64
 }
 
 // BatteryState captures mutable state.
@@ -37,7 +41,7 @@ type Battery struct {
 func NewBattery(params BatteryParams, initialSOC float64) (*Battery, error) {
 	b := &Battery{
 		Params: params,
-		State: BatteryState{SOC: initialSOC},
+		State:  BatteryState{SOC: initialSOC},
 	}
 	if err := b.Validate(); err != nil {
 		return nil, err
@@ -47,26 +51,26 @@ func NewBattery(params BatteryParams, initialSOC float64) (*Battery, error) {
 
 func (b *Battery) Validate() error {
 	p := b.Params
-	if p.EnergyCapacityMWh <= 0 {
-		return errors.New("EnergyCapacityMWh must be > 0")
+	if !finiteBatteryValue(p.EnergyCapacityMWh) || p.EnergyCapacityMWh <= 0 {
+		return errors.New("EnergyCapacityMWh must be finite and > 0")
 	}
-	if p.PowerCapacityMW <= 0 {
-		return errors.New("PowerCapacityMW must be > 0")
+	if !finiteBatteryValue(p.PowerCapacityMW) || p.PowerCapacityMW <= 0 {
+		return errors.New("PowerCapacityMW must be finite and > 0")
 	}
-	if p.ChargeEfficiency <= 0 || p.ChargeEfficiency > 1 {
-		return errors.New("ChargeEfficiency must be in (0, 1]")
+	if !finiteBatteryValue(p.ChargeEfficiency) || p.ChargeEfficiency <= 0 || p.ChargeEfficiency > 1 {
+		return errors.New("ChargeEfficiency must be finite and in (0, 1]")
 	}
-	if p.DischargeEfficiency <= 0 || p.DischargeEfficiency > 1 {
-		return errors.New("DischargeEfficiency must be in (0, 1]")
+	if !finiteBatteryValue(p.DischargeEfficiency) || p.DischargeEfficiency <= 0 || p.DischargeEfficiency > 1 {
+		return errors.New("DischargeEfficiency must be finite and in (0, 1]")
 	}
-	if p.MinSOC < 0 || p.MinSOC > 1 || p.MaxSOC < 0 || p.MaxSOC > 1 || p.MinSOC > p.MaxSOC {
-		return errors.New("MinSOC/MaxSOC must satisfy 0<=MinSOC<=MaxSOC<=1")
+	if !finiteBatteryValue(p.MinSOC) || !finiteBatteryValue(p.MaxSOC) || p.MinSOC < 0 || p.MaxSOC > 1 || p.MinSOC > p.MaxSOC {
+		return errors.New("MinSOC/MaxSOC must be finite and satisfy 0<=MinSOC<=MaxSOC<=1")
 	}
-	if b.State.SOC < p.MinSOC || b.State.SOC > p.MaxSOC {
-		return errors.New("initial SOC must be within [MinSOC, MaxSOC]")
+	if !finiteBatteryValue(b.State.SOC) || b.State.SOC < p.MinSOC || b.State.SOC > p.MaxSOC {
+		return errors.New("SOC must be finite and within [MinSOC, MaxSOC]")
 	}
-	if p.DegradationCostPerMWh < 0 {
-		return errors.New("DegradationCostPerMWh must be >= 0")
+	if !finiteBatteryValue(p.DegradationCostPerMWh) || p.DegradationCostPerMWh < 0 {
+		return errors.New("DegradationCostPerMWh must be finite and >= 0")
 	}
 	return nil
 }
@@ -79,13 +83,13 @@ type Dispatch struct {
 
 // IntervalResult captures what happened in one interval.
 type IntervalResult struct {
-	PowerMW        float64 // realized power (may be clipped)
-	EnergyToGridMWh float64 // discharge energy delivered to grid
+	PowerMW           float64 // realized power (may be clipped)
+	EnergyToGridMWh   float64 // discharge energy delivered to grid
 	EnergyFromGridMWh float64 // charge energy pulled from grid
-	ThroughputMWh  float64 // EnergyFromGridMWh + EnergyToGridMWh
-	SOCStart       float64
-	SOCEnd         float64
-	PNL            float64 // $ for this interval (incl degradation)
+	ThroughputMWh     float64 // EnergyFromGridMWh + EnergyToGridMWh
+	SOCStart          float64
+	SOCEnd            float64
+	PNL               float64 // $ for this interval (incl degradation)
 }
 
 // ClipDispatch enforces the power limit, without applying SOC constraints.
@@ -107,59 +111,58 @@ func (b *Battery) ClipDispatch(d Dispatch) Dispatch {
 // lmp is $/MWh for the interval.
 // durationHours is the interval length in hours.
 func (b *Battery) ApplyDispatch(lmp float64, d Dispatch, durationHours float64) (IntervalResult, error) {
-	if durationHours <= 0 {
-		return IntervalResult{}, errors.New("durationHours must be > 0")
+	next, result, err := SimulateInterval(b.Params, b.State, lmp, d, durationHours)
+	if err != nil {
+		return IntervalResult{}, err
+	}
+	b.State = next
+	return result, nil
+}
+
+// SimulateInterval evaluates a grid-side dispatch without mutating its inputs.
+// On failure it returns the original state and an empty interval result.
+func SimulateInterval(params BatteryParams, state BatteryState, lmp float64, dispatch Dispatch, durationHours float64) (BatteryState, IntervalResult, error) {
+	battery := Battery{Params: params, State: state}
+	if err := battery.Validate(); err != nil {
+		return state, IntervalResult{}, err
+	}
+	if !finiteBatteryValue(lmp) {
+		return state, IntervalResult{}, errors.New("lmp must be finite")
+	}
+	if !finiteBatteryValue(dispatch.PowerMW) {
+		return state, IntervalResult{}, errors.New("dispatch PowerMW must be finite")
+	}
+	if !finiteBatteryValue(durationHours) || durationHours <= 0 {
+		return state, IntervalResult{}, errors.New("durationHours must be finite and > 0")
 	}
 
-	d = b.ClipDispatch(d)
-	p := d.PowerMW
-
-	res := IntervalResult{
-		SOCStart: b.State.SOC,
+	power := battery.ClipDispatch(dispatch).PowerMW
+	result := IntervalResult{SOCStart: state.SOC}
+	storedDelta := 0.0
+	if power < 0 {
+		headroom := (params.MaxSOC - state.SOC) * params.EnergyCapacityMWh
+		result.EnergyFromGridMWh = math.Min(-power*durationHours, headroom/params.ChargeEfficiency)
+		storedDelta = result.EnergyFromGridMWh * params.ChargeEfficiency
+	} else if power > 0 {
+		available := (state.SOC - params.MinSOC) * params.EnergyCapacityMWh
+		result.EnergyToGridMWh = math.Min(power*durationHours, available*params.DischargeEfficiency)
+		storedDelta = -result.EnergyToGridMWh / params.DischargeEfficiency
 	}
 
-	// SOC constraints determine the max feasible charge/discharge for the interval.
-	maxChargeMWhGrid := b.maxChargeEnergyFromGridMWh(durationHours)
-	maxDischargeMWhGrid := b.maxDischargeEnergyToGridMWh(durationHours)
-
-	// Convert requested power to requested grid-energy (before/after efficiency).
-	if p < 0 {
-		// Charging: power magnitude is MW from grid.
-		reqFromGridMWh := math.Abs(p) * durationHours
-		if reqFromGridMWh > maxChargeMWhGrid {
-			reqFromGridMWh = maxChargeMWhGrid
-			p = -reqFromGridMWh / durationHours
-		}
-		// SOC increases by stored energy = fromGrid * chargeEff
-		storedMWh := reqFromGridMWh * b.Params.ChargeEfficiency
-		b.State.SOC = clamp01((b.State.SOC*b.Params.EnergyCapacityMWh + storedMWh) / b.Params.EnergyCapacityMWh)
-
-		res.PowerMW = p
-		res.EnergyFromGridMWh = reqFromGridMWh
-		res.EnergyToGridMWh = 0
-		res.ThroughputMWh = reqFromGridMWh
-	} else if p > 0 {
-		// Discharging: power is MW delivered to grid.
-		reqToGridMWh := p * durationHours
-		if reqToGridMWh > maxDischargeMWhGrid {
-			reqToGridMWh = maxDischargeMWhGrid
-			p = reqToGridMWh / durationHours
-		}
-		// SOC decreases by withdrawn energy = toGrid / dischargeEff
-		withdrawnMWh := reqToGridMWh / b.Params.DischargeEfficiency
-		b.State.SOC = clamp01((b.State.SOC*b.Params.EnergyCapacityMWh - withdrawnMWh) / b.Params.EnergyCapacityMWh)
-
-		res.PowerMW = p
-		res.EnergyFromGridMWh = 0
-		res.EnergyToGridMWh = reqToGridMWh
-		res.ThroughputMWh = reqToGridMWh
-	} else {
-		res.PowerMW = 0
+	next := BatteryState{SOC: math.Max(params.MinSOC, math.Min(params.MaxSOC, state.SOC+storedDelta/params.EnergyCapacityMWh))}
+	result.SOCEnd = next.SOC
+	result.PowerMW = (result.EnergyToGridMWh - result.EnergyFromGridMWh) / durationHours
+	result.ThroughputMWh = result.EnergyFromGridMWh + result.EnergyToGridMWh
+	result.PNL = battery.CalculateIntervalPnL(lmp, result.EnergyFromGridMWh, result.EnergyToGridMWh)
+	if !finiteBatteryValue(storedDelta) || !finiteBatteryValue(result.ThroughputMWh) || !finiteBatteryValue(result.PowerMW) || !finiteBatteryValue(result.PNL) {
+		return state, IntervalResult{}, errors.New("battery interval exceeds finite numeric range")
 	}
-
-	res.SOCEnd = b.State.SOC
-	res.PNL = b.CalculateIntervalPnL(lmp, res.EnergyFromGridMWh, res.EnergyToGridMWh)
-	return res, nil
+	actualStoredDelta := (next.SOC - state.SOC) * params.EnergyCapacityMWh
+	tolerance := math.Max(1e-9, 1e-9*math.Max(math.Abs(actualStoredDelta), math.Abs(storedDelta)))
+	if math.Abs(actualStoredDelta-storedDelta) > tolerance {
+		return state, IntervalResult{}, ErrUnrepresentableEnergy
+	}
+	return next, result, nil
 }
 
 // CalculateIntervalPnL computes interval PnL given the *grid-side* energies.
@@ -172,37 +175,6 @@ func (b *Battery) CalculateIntervalPnL(lmp float64, energyFromGridMWh float64, e
 	return revenue - cost - degradation
 }
 
-func (b *Battery) maxChargeEnergyFromGridMWh(durationHours float64) float64 {
-	// Max additional stored energy before hitting MaxSOC.
-	storableMWh := (b.Params.MaxSOC - b.State.SOC) * b.Params.EnergyCapacityMWh
-	if storableMWh <= 0 {
-		return 0
-	}
-	// Grid energy required = stored / eff.
-	limitBySOC := storableMWh / b.Params.ChargeEfficiency
-	limitByPower := b.Params.PowerCapacityMW * durationHours
-	return math.Max(0, math.Min(limitBySOC, limitByPower))
+func finiteBatteryValue(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }
-
-func (b *Battery) maxDischargeEnergyToGridMWh(durationHours float64) float64 {
-	// Max withdrawable stored energy before hitting MinSOC.
-	withdrawableMWh := (b.State.SOC - b.Params.MinSOC) * b.Params.EnergyCapacityMWh
-	if withdrawableMWh <= 0 {
-		return 0
-	}
-	// Grid energy delivered = withdrawn * eff.
-	limitBySOC := withdrawableMWh * b.Params.DischargeEfficiency
-	limitByPower := b.Params.PowerCapacityMW * durationHours
-	return math.Max(0, math.Min(limitBySOC, limitByPower))
-}
-
-func clamp01(x float64) float64 {
-	if x < 0 {
-		return 0
-	}
-	if x > 1 {
-		return 1
-	}
-	return x
-}
-

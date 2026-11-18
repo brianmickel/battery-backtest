@@ -38,8 +38,7 @@ type LedgerRow struct {
 }
 
 type Result struct {
-	Ledger []LedgerRow
+	Ledger   []LedgerRow
 	TotalPNL float64
 	FinalSOC float64
 }
-

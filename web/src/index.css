@@ -93,9 +93,30 @@ label {
 
 .form-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
   gap: 0.75em;
   margin-bottom: 0.75em;
+}
+
+.app-shell { max-width: 1600px; margin: 0 auto; padding: 1em; }
+.app-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 1em; margin-top: 1em; align-items: start; }
+.app-columns > *, .request-editor, fieldset { min-width: 0; }
+fieldset { border: 1px solid #555; border-radius: 6px; margin: 0 0 1em; padding: 1em; }
+legend { font-weight: 600; padding: 0 .4em; }
+.radio-group { display: flex; flex-wrap: wrap; gap: 1em; }
+.radio-group label, .checkbox-label { display: flex; align-items: center; gap: .5em; }
+input[type="radio"], input[type="checkbox"] { width: auto; margin: 0; flex-shrink: 0; }
+.editor-actions { display: flex; flex-wrap: wrap; gap: .5em; margin: 1em 0; }
+.request-preview { max-width: 100%; max-height: 24rem; overflow: auto; padding: .75em; background: #0a0a0a; }
+#request-json { max-width: 100%; resize: vertical; font-family: monospace; }
+.field-error { color: #ffaaaa; font-size: .85em; margin: .4em 0 0; }
+.error-link { color: inherit; background: transparent; padding: .25em; text-align: left; text-decoration: underline; overflow-wrap: anywhere; }
+.error h3 { margin-top: 0; }
+.run-request { margin-top: 1em; }
+button:disabled, input:disabled { cursor: not-allowed; opacity: .65; }
+
+@media (max-width: 900px) {
+  .app-columns { grid-template-columns: minmax(0, 1fr); }
 }
 
 .loading {

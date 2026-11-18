@@ -4,22 +4,28 @@ import "time"
 
 // BacktestResponse represents the response from a backtest run
 type BacktestResponse struct {
-	ID      string           `json:"id,omitempty"`
-	Status  string           `json:"status"`
-	Summary BacktestSummary  `json:"summary"`
-	Ledger  []LedgerRow      `json:"ledger,omitempty"`
+	Status  string          `json:"status"`
+	Summary BacktestSummary `json:"summary"`
+	Ledger  []LedgerRow     `json:"ledger,omitempty"`
 }
 
 // BacktestSummary contains aggregated backtest results
 type BacktestSummary struct {
-	TotalPNL        float64         `json:"total_pnl"`
-	FinalSOC        float64         `json:"final_soc"`
-	TotalIntervals  int             `json:"total_intervals"`
-	BacktestWindow  TimeWindow      `json:"backtest_window"`
-	EnergyChargedMWh float64        `json:"energy_charged_mwh"`
-	EnergyDischargedMWh float64     `json:"energy_discharged_mwh"`
-	ChargeWindows   []ChargeWindow    `json:"charge_windows,omitempty"`    // Per-day charge windows
-	DischargeWindows []DischargeWindow    `json:"discharge_windows,omitempty"` // Per-day discharge windows
+	InitialSOC           float64           `json:"initial_soc"`
+	InitialEnergyMWh     float64           `json:"initial_energy_mwh"`
+	FinalEnergyMWh       float64           `json:"final_energy_mwh"`
+	Timezone             string            `json:"timezone"`
+	CoveredDurationHours float64           `json:"covered_duration_hours"`
+	GapDurationHours     float64           `json:"gap_duration_hours"`
+	GapCount             int               `json:"gap_count"`
+	TotalPNL             float64           `json:"total_pnl"`
+	FinalSOC             float64           `json:"final_soc"`
+	TotalIntervals       int               `json:"total_intervals"`
+	BacktestWindow       TimeWindow        `json:"backtest_window"`
+	EnergyChargedMWh     float64           `json:"energy_charged_mwh"`
+	EnergyDischargedMWh  float64           `json:"energy_discharged_mwh"`
+	ChargeWindows        []ChargeWindow    `json:"charge_windows,omitempty"`    // Contiguous charge windows
+	DischargeWindows     []DischargeWindow `json:"discharge_windows,omitempty"` // Contiguous discharge windows
 }
 
 // TimeWindow represents a time range
@@ -32,14 +38,14 @@ type TimeWindow struct {
 type ChargeWindow struct {
 	TimeWindow
 	AverageCostPerMWh float64 `json:"average_cost_per_mwh"` // Weighted average LMP during charging
-	EnergyMWh          float64 `json:"energy_mwh"`           // Total energy charged in this window
+	EnergyMWh         float64 `json:"energy_mwh"`           // Total energy charged in this window
 }
 
 // DischargeWindow represents a discharge window with average price
 type DischargeWindow struct {
 	TimeWindow
 	AveragePricePerMWh float64 `json:"average_price_per_mwh"` // Weighted average LMP during discharging
-	EnergyMWh          float64 `json:"energy_mwh"`             // Total energy discharged in this window
+	EnergyMWh          float64 `json:"energy_mwh"`            // Total energy discharged in this window
 }
 
 // LedgerRow represents one interval in the backtest ledger
@@ -94,9 +100,8 @@ type Ranking struct {
 
 // BatteryInfo represents information about a battery preset
 type BatteryInfo struct {
-	ID   string      `json:"id"`
-	Name string      `json:"name"`
-	File string      `json:"file"`
+	ID    string       `json:"id"`
+	Name  string       `json:"name"`
 	Specs BatterySpecs `json:"specs"`
 }
 
@@ -104,21 +109,6 @@ type BatteryInfo struct {
 type BatterySpecs struct {
 	EnergyCapacityMWh float64 `json:"energy_capacity_mwh"`
 	PowerCapacityMW   float64 `json:"power_capacity_mw"`
-}
-
-// StrategyInfo represents information about a strategy
-type StrategyInfo struct {
-	Name        string           `json:"name"`
-	Description string           `json:"description"`
-	Parameters  []ParameterInfo  `json:"parameters"`
-}
-
-// ParameterInfo describes a strategy parameter
-type ParameterInfo struct {
-	Name        string      `json:"name"`
-	Type        string      `json:"type"` // "float", "int", "string"
-	Description string      `json:"description"`
-	Default     interface{} `json:"default,omitempty"`
 }
 
 // DatasetInfo represents information about a Grid Status dataset
@@ -143,7 +133,9 @@ type ErrorResponse struct {
 
 // ErrorDetail contains error information
 type ErrorDetail struct {
-	Code    string                 `json:"code"`
-	Message string                 `json:"message"`
-	Details map[string]interface{} `json:"details,omitempty"`
+	Code       string `json:"code"`
+	Message    string `json:"message"`
+	Field      string `json:"field,omitempty"`
+	Variation  string `json:"variation,omitempty"`
+	LocationID string `json:"location_id,omitempty"`
 }

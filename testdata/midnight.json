@@ -1,0 +1,15 @@
+{
+  "status_code": 200,
+  "data": [
+    {
+      "interval_start_utc": "2024-01-02T07:45:00Z",
+      "interval_end_utc": "2024-01-02T08:15:00Z",
+      "interval_start_local": "2024-01-01T23:45:00-08:00",
+      "interval_end_local": "2024-01-02T00:15:00-08:00",
+      "market": "SYNTHETIC",
+      "location": "TEST_NODE",
+      "location_type": "NODE",
+      "lmp": 20
+    }
+  ]
+}
